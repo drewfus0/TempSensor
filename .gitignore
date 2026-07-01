@@ -1,0 +1,23 @@
+# PlatformIO build output and dependency cache
+.pio/
+.piolibdeps/
+
+# Local libraries/deps cache (if created by tools)
+libdeps/
+
+# VS Code workspace settings (local machine specific)
+.vscode/
+
+# OS/editor temp files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Logs and temporary output
+*.log
+*.tmp
+
+# Optional generated tooling files
+compile_commands.json
