@@ -91,3 +91,66 @@ If you want, once you answer these I’ll produce:
 simple project brief
 A phased implementation plan
 A memory-risk plan (RAM/flash/SD strategy) tailored to your hardware##
+
+
+Findings (highest severity first)
+
+High: conflicting performance requirements could break reliability and memory plans.
+You want 1 second sampling, historical graphing/filtering for all sensors, a web UI with controls, SD logging, and e-ink updates, but there is no explicit resource budget for RAM, flash, CPU, and max web history window. This is the main risk behind your memory concern.
+Reference: Breif.md:10, Breif.md:13, Breif.md:42, Breif.md:61, Breif.md:75
+
+High: acceptance criteria are not testable yet.
+“Have all todo stuff running in some way” is too broad to verify completion. You need measurable success criteria per milestone (for example, sample interval tolerance, max missed samples, max page load time, max data-loss window).
+Reference: Breif.md:83, Breif.md:86
+
+Medium: data retention policy is underspecified for “indefinitely.”
+You said “until space runs out,” but no behavior is defined once SD is full (stop logging, overwrite oldest files, alert on display/web, etc.).
+Reference: Breif.md:36
+
+Medium: timestamp requirement is vague for offline conditions.
+You want NTP, but the brief does not define expected behavior when Wi-Fi/NTP is unavailable at boot or during runtime.
+Reference: Breif.md:34, Breif.md:63
+
+Medium: security stance is risky if controls are exposed on LAN without auth.
+Local-only helps, but changing sample rate/downloading logs without authentication is still a risk on shared networks.
+Reference: Breif.md:63, Breif.md:65, Breif.md:67
+
+Low: display requirements are almost complete but still slightly ambiguous.
+You mention 30-60 min refresh or button-triggered refresh, but not whether full refresh vs partial refresh policy is required.
+Reference: Breif.md:50
+
+Low: the brief still contains prompt leftovers and wording that may confuse implementation.
+The trailing “If you want...” section and a few typo-heavy lines reduce clarity for handoff/use as a project spec.
+Reference: Breif.md:89, Breif.md:93
+
+What is strong already
+
+Scope is practical and grounded in real hardware and a real use case.
+You clearly defined indoor, plugged-in, local-network constraints.
+CSV choice is good for easy analysis.
+First-milestone timeline is realistic for a side project.
+Missing info to finalize the brief
+
+SD full behavior: overwrite oldest or stop logging?
+Minimum acceptable uptime/recovery behavior after power outage.
+Max acceptable data loss window (you implied 1-5 min buffer loss is okay, confirm exact target).
+LAN controls: keep no auth, or add simple password?
+Historical graph depth on web UI (last 24h, 7d, 30d, etc.).
+If you want, I can now rewrite Breif.md into a clean, concise version with:
+
+Final project brief
+Milestone 1 and full-release acceptance criteria
+Explicit risk and memory strategy sections
+
+
+I agree with your findings.
+1. Memory for funtionality is my main concern for this.
+2. this is a side project, as such tolerances are adaptable and will likely shift base on memory and capacty limits.
+3. I done see this device staying functional or inservice for longer than the sd card 32gb to fill.
+4. hrm. good point. for now just estimate datetime form logs and continue from there, until ntp is reastablished(not in csv estimated values, and when ntp was reestablished).
+5. for now this is fine but will likely improve this after we sort out other limitations.
+6. Go with full refreshs.
+7. this is what we are working to fix :)
+
+Missing info.
+Add these to a list for futher considerations at a later stage.
