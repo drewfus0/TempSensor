@@ -1,16 +1,17 @@
 //  feel free to ask for more detail or claifications.
 
 Hardware:
--LILYGO T5 Screen 4.7inch S3 v2.3 (2021-6-10)
--Sensor TS1208P-BME280-33v
--Sandisk Extreme 32GB micro sd HC V30
+-LOLIN D1 mini Pro v2.0.0
+-LOLIN microSD Card Shield v1.2.0
+-LOLIN OLED Shield v2.0.0
+-Sensor BME280 3.3V
 
 ToDo
--wire the T5 and sensor together. (will need a wiring guide)
--have the t5 log all sensor data to memory (short intervals 1 sec) and sd card (write collected data from memory after longer interval)
--have the display update every so often to show a graph of the temp data of the last (suggest interval to show.) also show the last readings for other data.
+-wire the D1 mini, OLED shield, microSD shield, and BME280 together. (wiring guide complete)
+-have the D1 mini log all sensor data to memory (short intervals 1 sec) and sd card (write collected data from memory after longer interval)
+-have the OLED update every so often to show a graph of the temp data of the last (suggest interval to show.) also show the last readings for other data.
 -have the device connect to wifi and host a basic web page to graph and display the data from all sensors. (web site page possibly stored on sd card?)
--not have this all compile and fit in the t5 limited memory.
+-not have this all compile and fit in the D1 mini limited memory.
 
 
 Project goal
@@ -46,8 +47,8 @@ On power loss, is losing last few seconds acceptable?
 Fine with lossing values in memory.
 
 Display expectations
-How often should the e-ink screen refresh (important for ghosting and lifespan)?
-Looking to extend the lifespan of the display so was thinking 30min to 1hour, or as a response to use button press(T5 has a button we can use?).
+How often should the OLED screen refresh?
+Looking to balance readability and performance, so refresh interval can be tuned during testing.
 What should be shown on-screen:
 Current readings
 Mini graph (last hour)
@@ -72,7 +73,7 @@ PlatformIO.
 Any libraries you want to use or avoid?
 none
 Must the website assets be served from SD, flash, or either?
-where ever is the simplest and does not restrict us too much. T5 has limit storage.
+where ever is the simplest and does not restrict us too much. D1 mini has limited storage.
 Do you need OTA firmware update support?
 For now no.
 
@@ -96,7 +97,7 @@ A memory-risk plan (RAM/flash/SD strategy) tailored to your hardware##
 Findings (highest severity first)
 
 High: conflicting performance requirements could break reliability and memory plans.
-You want 1 second sampling, historical graphing/filtering for all sensors, a web UI with controls, SD logging, and e-ink updates, but there is no explicit resource budget for RAM, flash, CPU, and max web history window. This is the main risk behind your memory concern.
+You want 1 second sampling, historical graphing/filtering for all sensors, a web UI with controls, SD logging, and OLED updates, but there is no explicit resource budget for RAM, flash, CPU, and max web history window. This is the main risk behind your memory concern.
 Reference: Breif.md:10, Breif.md:13, Breif.md:42, Breif.md:61, Breif.md:75
 
 High: acceptance criteria are not testable yet.

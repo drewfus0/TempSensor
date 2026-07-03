@@ -10,7 +10,7 @@ void setup() {
   delay(1500);
   
   Serial.println("\n=== BME280 Quick Test ===");
-  Wire.begin(18, 17);
+  Wire.begin(4, 5);  // SDA=D2, SCL=D1
   delay(10);
   
   // Try 0x76 first (most common BME280 address with SDO to GND)
@@ -53,7 +53,7 @@ void setup() {
   
   if (found == 0) {
     Serial.println("\n⚠️  No I2C devices found!");
-    Serial.println("Verify: 1) VCC=3.3V  2) GND connected  3) SDA→GPIO18  4) SCL→GPIO17");
+    Serial.println("Verify: 1) VCC=3.3V  2) GND connected  3) SDA->D2/GPIO4  4) SCL->D1/GPIO5");
   } else {
     Serial.printf("\nFound %d device(s). Check if any are your BME280.\n", found);
   }

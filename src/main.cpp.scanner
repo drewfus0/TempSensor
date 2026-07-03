@@ -5,9 +5,9 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
   
-  Wire.begin(18, 17);  // SDA, SCL
+  Wire.begin(4, 5);  // SDA=D2, SCL=D1
   
-  Serial.println("I2C Scanner - searching for devices on GPIO18 (SDA), GPIO17 (SCL)...\n");
+  Serial.println("I2C Scanner - searching for devices on D2/GPIO4 (SDA), D1/GPIO5 (SCL)...\n");
   
   byte error, address;
   int nDevices = 0;

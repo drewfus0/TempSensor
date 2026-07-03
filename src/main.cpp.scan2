@@ -1,8 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 
-TwoWire i2c0 = TwoWire(0);  // I2C bus 0 (default)
-TwoWire i2c1 = TwoWire(1);  // I2C bus 1 (secondary)
+TwoWire i2c = TwoWire();
 
 void scanBus(TwoWire& wire, const char* busName) {
   Serial.printf("\nScanning %s...\n", busName);
@@ -41,18 +40,10 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
   
-  Serial.println("\n=== SCANNING ALL I2C BUSES ===");
-  
-  // I2C Bus 0 (custom pins - GPIO18/17)
-  Serial.println("Bus 0: GPIO18 (SDA), GPIO17 (SCL)");
-  i2c0.begin(18, 17);
-  scanBus(i2c0, "I2C Bus 0");
-  
-  // I2C Bus 1 (default/alternate pins)
-  // On ESP32-S3 these default to GPIO19/20 or GPIO9/8
-  Serial.println("\nBus 1: Default pins");
-  i2c1.begin();  // Use default pins
-  scanBus(i2c1, "I2C Bus 1");
+  Serial.println("\n=== SCANNING I2C BUS (D1 mini Pro) ===");
+  Serial.println("Bus: D2/GPIO4 (SDA), D1/GPIO5 (SCL)");
+  i2c.begin(4, 5);
+  scanBus(i2c, "I2C Bus");
 }
 
 void loop() {

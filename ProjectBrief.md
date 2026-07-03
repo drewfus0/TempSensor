@@ -1,138 +1,94 @@
-# TempSensor Project Brief (Working Draft v1)
+# TempSensor Project Brief (D1 Mini Refresh)
 
 Source notes: Breif.md
-Date: 2026-07-02
+Date: 2026-07-03
 Project type: Personal side project
 
 ## 1) Project Summary
-Build a home indoor environmental monitor using a LILYGO T5 4.7 inch e-ink board and a BME280 sensor.
+Build a home indoor environmental monitor using a LOLIN D1 mini Pro, BME280 sensor, OLED Shield, and microSD shield.
 
 The device will:
 - sample temperature, humidity, and pressure
 - log data to SD card in CSV format
-- show current data and a small temperature history graph on the e-ink display
+- show current readings and a small temperature trend on OLED
 - host a local web dashboard for live readings and historical graphing
 
-Primary concern: memory and storage limits while running all features together.
+Primary concern: memory limits and long-run stability on ESP8266.
 
 ## 2) Hardware
-- Board: LILYGO T5 Screen 4.7 inch S3 v2.3 (2021-6-10)
-- Sensor: TS1208P-BME280-3.3V
-- Storage: SanDisk Extreme 32GB microSD HC V30
+- Board: LOLIN D1 mini Pro v2.0.0 (ESP8266)
+- Sensor: BME280 (I2C on D1/D2)
+- Display: LOLIN OLED Shield v2.0.0
+- Storage: LOLIN microSD Card Shield v1.2.0
 - Power: Plugged in (no battery requirement)
 - Environment: Indoor use
 
 ## 3) Goals
 ### Main goal
-Monitor home indoor temperature (with humidity and pressure also captured).
+Monitor indoor temperature while also recording humidity and pressure.
 
-### First milestone target (about 1 week, flexible)
+### First milestone target
 - sensor wired and read successfully
-- 1 second sampling loop running (best effort)
+- best-effort 1 second sampling loop
 - periodic SD CSV logging from RAM buffer
-- e-ink screen shows current readings plus simple temp graph
-- Wi-Fi connection and basic local hello world page
+- OLED shows current readings and a simple trend display
+- Wi-Fi connection and basic local web page
 
 ### Full project target
-All planned features running together with stable behavior under device memory limits.
+All planned features run together with stable memory behavior on ESP8266.
 
 ## 4) Functional Requirements
 1. Data collection
 - Read BME280 temperature, humidity, pressure.
 - Target sample interval: 1 second.
-- Acceptable jitter/missed intervals: up to about 5 seconds when system is busy.
+- Acceptable missed/jitter windows when busy: up to about 5 seconds.
 
 2. Data logging
 - Log to CSV for spreadsheet analysis.
-- Buffer data in RAM and flush to SD every 1 to 5 minutes (tunable).
-- Data loss on power loss is acceptable for unflushed RAM samples.
-- Retention target: keep logging until SD fills.
+- Buffer in RAM and flush to SD every 1 to 5 minutes (tunable).
+- Data loss on sudden power loss is acceptable for unflushed RAM samples.
+- Retention target: until SD card is full.
 
 3. Time handling
 - Use NTP time when available.
-- If NTP is unavailable, continue logging with estimated/relative timestamps.
-- Include a CSV field that marks timestamp quality (for example: ntp or estimated).
-- Record an event when NTP is re-established so timeline trust is clear.
+- If NTP is unavailable, continue with estimated timestamps.
+- Mark each CSV row with timestamp quality (`ntp` or `estimated`).
+- Record a timeline event when NTP is re-established.
 
-4. Display behavior (e-ink)
-- Show current readings (temp, humidity, pressure).
-- Show mini temperature graph (last hour target window).
-- Use full refresh updates.
-- Refresh cadence target: every 30 to 60 minutes, plus optional manual refresh via button.
+4. Display behavior (OLED)
+- Show current readings (temperature, humidity, pressure).
+- Show compact recent temperature trend.
+- Refresh often enough for readability while controlling RAM/CPU use.
 
 5. Web dashboard (local network only)
-- Live values for all sensors.
+- Live values for all sensor fields.
 - Historical graphs for each sensor value.
-- Date-time filter (start and end).
-- Controls for sample rate and related runtime settings.
+- Date-time range filter (start/end).
+- Runtime controls (sampling and related settings).
 - Log download support.
 - No authentication for now.
 
-## 5) Technical Constraints and Implementation Direction
+## 5) Technical Constraints
 - Framework: PlatformIO.
-- No mandatory library constraints yet.
-- Web assets may be served from flash or SD, whichever is simplest and best for memory limits.
-- OTA updates: not required in current phase.
+- Prioritize memory-safe, bounded data structures.
+- Keep web and display rendering conservative for ESP8266 capacity.
+- OTA is not required in current phase.
 
-## 6) Memory-Risk Plan (RAM, Flash, SD)
-### Key risk
-Feature set may exceed practical RAM/flash budget if buffering, graph generation, and web history are not bounded.
-
-### Planned controls
-1. Keep in-RAM structures bounded
-- fixed-size ring buffer for recent samples
-- avoid unbounded dynamic containers
-
-2. Keep web history queries bounded
-- load filtered windows from SD files instead of keeping long history in RAM
-- paginate/chunk responses when needed
-
-3. Reduce render costs
-- precompute small graph datasets
-- avoid frequent display redraws (already low refresh cadence)
-
-4. Keep storage format lightweight
-- compact CSV rows
-- rotate log files by day or size if needed
-
-5. Measure and tune early
-- add periodic memory telemetry logs (free heap, largest block)
-- tune sample interval, flush interval, and graph window based on observed limits
-
-## 7) Acceptance Criteria (Current Draft)
+## 6) Acceptance Criteria
 ### Milestone 1 accepted when
-- sensor values update continuously
-- samples are written to CSV on SD from buffered memory
-- e-ink shows current values and a temperature mini graph
-- device connects to Wi-Fi and serves a basic local page
+- BME280 values update continuously
+- buffered samples are persisted to SD CSV
+- OLED displays live values and trend output
+- Wi-Fi connects and local page responds
 
 ### Full project accepted when
-- live and historical data are available on web UI with date filtering
-- runtime controls (for sampling/config) work from web UI
-- log download works
-- system remains stable during normal operation with no memory-related crashes in basic soak testing
+- live and historical data are usable from the web UI
+- runtime controls and log download work
+- system passes basic soak runs without memory-related crashes
 
-## 8) Deferred / Future Considerations
-These are intentionally deferred until after baseline functionality is stable:
-
-1. SD full policy
-- choose one: stop logging, overwrite oldest files, or archive externally
-
-2. Explicit tolerance targets
-- define measurable limits (max missed samples, max data-loss window, UI response targets)
-
-3. NTP outage policy detail
-- define exact fallback timestamp method and resync correction behavior
-
-4. Dashboard security
-- decide if simple LAN authentication is needed later
-
-5. Historical depth targets
-- define default graph windows (24h, 7d, 30d) and data decimation policy
-
-6. Long-run service strategy
-- maintenance and reliability expectations if deployed for longer periods
-
-## 9) Open Notes
-- This is a side project and requirements may adapt as memory/capacity constraints are discovered.
-- Priority order is practicality and stability over perfect timing precision.
+## 7) Deferred Considerations
+1. SD full-card behavior policy.
+2. Explicit measurable tolerance targets.
+3. NTP outage and recovery detail.
+4. Local dashboard authentication.
+5. Historical graph depth defaults and decimation strategy.
