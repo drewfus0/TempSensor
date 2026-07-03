@@ -10,7 +10,7 @@ Build a home indoor environmental monitor using a LOLIN D1 mini Pro, BME280 sens
 The device will:
 - sample temperature, humidity, and pressure
 - log data to SD card in CSV format
-- show current readings and a small temperature trend on OLED
+- show current readings and status on OLED
 - host a local web dashboard for live readings and historical graphing
 
 Primary concern: memory limits and long-run stability on ESP8266.
@@ -31,8 +31,19 @@ Monitor indoor temperature while also recording humidity and pressure.
 - sensor wired and read successfully
 - best-effort 1 second sampling loop
 - periodic SD CSV logging from RAM buffer
-- OLED shows current readings and a simple trend display
+- OLED shows current readings and status
 - Wi-Fi connection and basic local web page
+
+### Milestone 1 status
+Complete.
+
+### Second milestone target
+- web dashboard shows live values for temperature, humidity, and pressure
+- web dashboard shows historical data and graphs sourced from SD CSV logs
+- date-time range filter for historical queries
+- runtime controls for sample rate and related settings
+- log download support from the local web UI
+- OLED remains a compact status/readout screen rather than a history display
 
 ### Full project target
 All planned features run together with stable memory behavior on ESP8266.
@@ -57,7 +68,6 @@ All planned features run together with stable memory behavior on ESP8266.
 
 4. Display behavior (OLED)
 - Show current readings (temperature, humidity, pressure).
-- Show compact recent temperature trend.
 - Refresh often enough for readability while controlling RAM/CPU use.
 
 5. Web dashboard (local network only)
@@ -78,8 +88,15 @@ All planned features run together with stable memory behavior on ESP8266.
 ### Milestone 1 accepted when
 - BME280 values update continuously
 - buffered samples are persisted to SD CSV
-- OLED displays live values and trend output
+- OLED displays live values and status output
 - Wi-Fi connects and local page responds
+
+### Milestone 2 accepted when
+- web dashboard renders historical data from SD logs
+- web dashboard supports date range filtering
+- web dashboard supports runtime controls and log download
+- web dashboard remains usable on ESP8266 memory limits
+- OLED remains readable with compact live status only
 
 ### Full project accepted when
 - live and historical data are usable from the web UI
