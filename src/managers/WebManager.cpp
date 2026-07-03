@@ -466,9 +466,91 @@ void WebManager::handleRoot() {
         grid-template-columns: 1fr;
       }
     }
+    
+    /* Modal / Progress Overlay */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(9, 13, 22, 0.85);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    .modal-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .modal-content {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 28px;
+      width: 90%;
+      max-width: 420px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.5);
+      text-align: center;
+      transform: scale(0.9);
+      transition: transform 0.3s ease;
+    }
+    .modal-overlay.active .modal-content {
+      transform: scale(1);
+    }
+    .modal-title {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      letter-spacing: 0.02em;
+      color: #fff;
+    }
+    .modal-subtitle {
+      font-size: 0.85rem;
+      color: var(--text-sub);
+      margin-bottom: 20px;
+    }
+    .modal-progress-container {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .modal-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent) 0%, #3b82f6 100%);
+      width: 0%;
+      border-radius: 4px;
+      transition: width 0.1s linear;
+    }
+    .modal-percent {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
   </style>
 </head>
 <body>
+  <div class='modal-overlay' id='progressModal'>
+    <div class='modal-content'>
+      <div class='modal-title'>Retrieving History Data</div>
+      <div class='modal-subtitle' id='modalStatus'>Scanning SD card logs...</div>
+      <div class='modal-progress-container'>
+        <div class='modal-progress-bar' id='modalProgressBar'></div>
+      </div>
+      <div class='modal-percent' id='modalProgressPercent'>0%</div>
+    </div>
+  </div>
+
   <div class='wrap'>
     <div class='head'>
       <div class='title-area'>
@@ -658,6 +740,7 @@ void WebManager::handleRoot() {
     const $ = (id) => document.getElementById(id);
     
     let chartPoints = [];
+    let historyLoaded = false;
     let minVal = 0;
     let maxVal = 1;
     let hoveredPoint = null;
@@ -747,7 +830,7 @@ void WebManager::handleRoot() {
         ctx.font = '13px var(--font-main)';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('No history data in this range.', padL + gw / 2, padT + gh / 2);
+        ctx.fillText(historyLoaded ? 'No history data in this range.' : 'Select a range and load history to display chart.', padL + gw / 2, padT + gh / 2);
         return;
       }
 
@@ -970,6 +1053,16 @@ void WebManager::handleRoot() {
       return q.toString();
     }
 
+    let isLoadingHistory = false;
+
+    function updateModalProgress(percent, status) {
+      $('modalProgressBar').style.width = percent + '%';
+      $('modalProgressPercent').textContent = Math.round(percent) + '%';
+      if (status) {
+        $('modalStatus').textContent = status;
+      }
+    }
+
     async function loadHistory() {
       const alert = $('historyAlert');
       alert.style.display = 'none';
@@ -984,27 +1077,79 @@ void WebManager::handleRoot() {
         }
       }
 
+      isLoadingHistory = true;
+      const modal = $('progressModal');
+      modal.classList.add('active');
+      updateModalProgress(0, 'Initializing data request...');
+
+      const maxPoints = Math.max(20, Math.min(1000, Number($('maxPoints').value || 300)));
+      const pageSize = 50;
+      let allPoints = [];
+      let offset = 0;
+
       try {
         setText('historyMeta', 'Loading history...');
-        const q = buildHistoryQuery();
-        const data = await fetchJson('/api/history?' + q);
-        chartPoints = Array.isArray(data.points) ? data.points : [];
+        const baseQuery = buildHistoryQuery();
+
+        while (true) {
+          const url = '/api/history?' + baseQuery + '&offset=' + offset + '&limit=' + pageSize;
+          const response = await fetch(url, { cache: 'no-store' });
+          if (!response.ok) {
+            throw new Error('HTTP ' + response.status);
+          }
+
+          const data = await response.json();
+          const matched = data.matched ?? 0;
+          const stride = data.stride ?? 1;
+          const points = Array.isArray(data.points) ? data.points : [];
+
+          if (points.length === 0 || matched === 0) {
+            break;
+          }
+
+          allPoints = allPoints.concat(points);
+          const totalExpected = Math.min(Math.ceil(matched / stride), maxPoints);
+
+          const percent = Math.min(100, (allPoints.length / totalExpected) * 100);
+          updateModalProgress(percent, 'Loaded ' + allPoints.length + ' of ' + totalExpected + ' points...');
+
+          if (allPoints.length >= totalExpected || points.length < pageSize) {
+            break;
+          }
+
+          offset += pageSize;
+          // Wait 250ms to yield to ESP8266's main loop / sensor logging
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+
+        chartPoints = allPoints;
+        historyLoaded = true;
         renderChart();
         setText('historyMeta',
-          'Metric: ' + (data.metric || '?') +
-          ' | Matched Samples: ' + (data.matched ?? 0) +
+          'Metric: ' + ($('metric').value) +
+          ' | Matched Samples: ' + (allPoints.length ? allPoints.length : 0) +
           ' | Downsampled Points: ' + chartPoints.length);
+
+        updateModalProgress(100, 'Done!');
+        await new Promise(resolve => setTimeout(resolve, 250));
       } catch (err) {
         chartPoints = [];
+        historyLoaded = true;
         renderChart();
         setText('historyMeta', 'History error: ' + err.message);
         alert.textContent = 'History load failed: ' + err.message;
         alert.className = 'alert-banner error';
         alert.style.display = 'block';
+      } finally {
+        modal.classList.remove('active');
+        setTimeout(() => {
+          isLoadingHistory = false;
+        }, 100);
       }
     }
 
     async function loadLogs() {
+      if (isLoadingHistory) return;
       try {
         const data = await fetchJson('/api/logs');
         const files = Array.isArray(data.files) ? data.files : [];
@@ -1028,6 +1173,7 @@ void WebManager::handleRoot() {
     }
 
     async function loadEvents() {
+      if (isLoadingHistory) return;
       try {
         const data = await fetchJson('/api/events?limit=30');
         const timeline = $('eventsTimeline');
@@ -1064,6 +1210,7 @@ void WebManager::handleRoot() {
     }
 
     async function loadSnapshot() {
+      if (isLoadingHistory) return;
       try {
         const [live, health] = await Promise.all([
           fetchJson('/api/live'),
@@ -1080,7 +1227,6 @@ void WebManager::handleRoot() {
         }
 
         if (health && health.has_health) {
-          // Format uptime
           const up = health.uptime_s;
           const hrs = Math.floor(up / 3600);
           const mins = Math.floor((up % 3600) / 60);
@@ -1110,6 +1256,7 @@ void WebManager::handleRoot() {
     }
 
     async function loadConfig() {
+      if (isLoadingHistory) return;
       try {
         const cfg = await fetchJson('/api/config');
         $('cfgSample').value = cfg.sample_interval_ms;
@@ -1121,6 +1268,7 @@ void WebManager::handleRoot() {
     }
 
     async function loadStaticPanels() {
+      if (isLoadingHistory) return;
       try {
         const tree = await fetchText('/api/sd-tree');
         $('sdtree').textContent = tree;
@@ -1150,6 +1298,7 @@ void WebManager::handleRoot() {
 
     $('cfgForm').addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (isLoadingHistory) return;
       const alert = $('cfgAlert');
       alert.style.display = 'none';
       
@@ -1188,6 +1337,7 @@ void WebManager::handleRoot() {
     });
 
     async function triggerAction(url, btnId) {
+      if (isLoadingHistory) return;
       const alert = $('actionAlert');
       const btn = $(btnId);
       alert.style.display = 'none';
@@ -1230,7 +1380,7 @@ void WebManager::handleRoot() {
       await loadSnapshot();
       await loadLogs();
       await loadEvents();
-      await loadHistory();
+      renderChart();
 
       setInterval(loadSnapshot, 1000);
       setInterval(loadEvents, 5000);
@@ -1441,7 +1591,9 @@ void WebManager::streamHistoryJson(File& file,
                                    const String& metric,
                                    const String& startTs,
                                    const String& endTs,
-                                   uint32_t maxPoints) {
+                                   uint32_t maxPoints,
+                                   uint32_t offset,
+                                   uint32_t limit) {
   uint32_t matched = 0;
 
   file.seek(0);
@@ -1469,9 +1621,12 @@ void WebManager::streamHistoryJson(File& file,
   server_.sendContent(metric);
   server_.sendContent("\",\"matched\":");
   server_.sendContent(String(matched));
+  server_.sendContent(",\"stride\":");
+  server_.sendContent(String(stride));
   server_.sendContent(",\"points\":[");
 
   uint32_t matchedIndex = 0;
+  uint32_t dsIndex = 0;
   uint32_t emitted = 0;
   file.seek(0);
   while (file.available()) {
@@ -1492,16 +1647,19 @@ void WebManager::streamHistoryJson(File& file,
     }
     ++matchedIndex;
 
-    if (emitted > 0) {
-      server_.sendContent(",");
-    }
+    if (dsIndex >= offset) {
+      if (emitted > 0) {
+        server_.sendContent(",");
+      }
 
-    String item = "{\"ts\":\"" + ts + "\",\"q\":\"" + quality + "\",\"v\":" + String(value, 2) + "}";
-    server_.sendContent(item);
-    ++emitted;
-    if (emitted >= maxPoints) {
-      break;
+      String item = "{\"ts\":\"" + ts + "\",\"q\":\"" + quality + "\",\"v\":" + String(value, 2) + "}";
+      server_.sendContent(item);
+      ++emitted;
+      if (emitted >= limit) {
+        break;
+      }
     }
+    ++dsIndex;
   }
 
   server_.sendContent("]}");
@@ -1559,6 +1717,22 @@ void WebManager::handleHistoryJson() {
     }
   }
 
+  uint32_t offset = 0;
+  if (server_.hasArg("offset")) {
+    if (!parsePositiveUIntArg("offset", offset)) {
+      sendJsonError(400, "offset must be a non-negative integer");
+      return;
+    }
+  }
+
+  uint32_t limit = maxPoints;
+  if (server_.hasArg("limit")) {
+    if (!parsePositiveUIntArg("limit", limit) || limit == 0) {
+      sendJsonError(400, "limit must be a positive integer");
+      return;
+    }
+  }
+
   if (!ensureSdReady()) {
     sendJsonError(503, "SD card unavailable");
     return;
@@ -1572,7 +1746,7 @@ void WebManager::handleHistoryJson() {
 
   const String startTs = server_.arg("start");
   const String endTs = server_.arg("end");
-  streamHistoryJson(file, metric, startTs, endTs, maxPoints);
+  streamHistoryJson(file, metric, startTs, endTs, maxPoints, offset, limit);
   file.close();
 }
 
