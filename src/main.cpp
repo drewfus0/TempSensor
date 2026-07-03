@@ -6,7 +6,7 @@ AppCoordinator app;
 
 void setup() {
   Serial.begin(115200);
-  delay(300);
+  delay(1500);  // allow USB-CDC to enumerate
   app.begin();
 }
 

@@ -1,16 +1,24 @@
 #include "managers/DisplayManager.h"
 
-#include <Adafruit_GFX.h>
-#include <math.h>
-#include <SPI.h>
+#include "epd_driver.h"
+#include "firasans.h"
+#include <esp_heap_caps.h>
 
-bool DisplayManager::begin(int csPin, int dcPin, int rstPin, int busyPin, int sckPin, int mosiPin) {
-  display_.init(115200, true, 2, false);
-  display_.setRotation(1);
-  display_.setTextColor(GxEPD_BLACK);
+bool DisplayManager::begin() {
+  framebuffer_ = (uint8_t*)ps_calloc(EPD_WIDTH * EPD_HEIGHT / 2, 1);
+  if (!framebuffer_) {
+    Serial.println("[Display] PSRAM framebuffer alloc failed");
+    return false;
+  }
+  memset(framebuffer_, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2);
+
+  epd_init();
+  epd_poweron();
+  epd_clear();
+  epd_poweroff();
 
   ready_ = true;
-  Serial.println("[Display] E-ink initialized");
+  Serial.println("[Display] EPD47 initialized");
   return true;
 }
 
@@ -19,68 +27,72 @@ void DisplayManager::render(const Sample& sample, const float* tempValues, size_
     return;
   }
 
-  display_.setFullWindow();
-  display_.firstPage();
-  do {
-    display_.fillScreen(GxEPD_WHITE);
+  memset(framebuffer_, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2);
 
-    display_.setCursor(20, 40);
-    display_.setTextSize(2);
-    display_.printf("Temp: %.2f C", sample.temperatureC);
+  char buf[96];
+  int32_t cx, cy;
 
-    display_.setCursor(20, 80);
-    display_.printf("Humidity: %.2f %%", sample.humidityPct);
+  cx = 20; cy = 50;
+  snprintf(buf, sizeof(buf), "Temp: %.1f C", sample.temperatureC);
+  writeln((GFXfont*)&FiraSans, buf, &cx, &cy, framebuffer_);
 
-    display_.setCursor(20, 120);
-    display_.printf("Pressure: %.2f hPa", sample.pressureHpa);
+  cx = 20; cy = 100;
+  snprintf(buf, sizeof(buf), "Humidity: %.1f %%", sample.humidityPct);
+  writeln((GFXfont*)&FiraSans, buf, &cx, &cy, framebuffer_);
 
-    display_.setTextSize(1);
-    display_.setCursor(20, 155);
-    display_.printf("Timestamp: %s (%s)", sample.timestamp, TimestampQualityToString(sample.quality));
+  cx = 20; cy = 150;
+  snprintf(buf, sizeof(buf), "Pressure: %.1f hPa", sample.pressureHpa);
+  writeln((GFXfont*)&FiraSans, buf, &cx, &cy, framebuffer_);
 
-    const int graphX = 20;
-    const int graphY = 190;
-    const int graphW = 900;
-    const int graphH = 300;
+  cx = 20; cy = 200;
+  snprintf(buf, sizeof(buf), "%s", sample.timestamp);
+  writeln((GFXfont*)&FiraSans, buf, &cx, &cy, framebuffer_);
 
-    display_.drawRect(graphX, graphY, graphW, graphH, GxEPD_BLACK);
-    display_.setCursor(graphX, graphY - 10);
-    display_.printf("Temperature trend (%lus window)", static_cast<unsigned long>(windowSeconds));
+  // Temperature bar graph
+  const int32_t GX = 20;
+  const int32_t GY = 215;
+  const int32_t GW = EPD_WIDTH - 2 * GX;
+  const int32_t GH = EPD_HEIGHT - GY - 10;
 
-    if (tempCount > 1) {
-      float minV = tempValues[0];
-      float maxV = tempValues[0];
-      for (size_t i = 1; i < tempCount; ++i) {
-        if (tempValues[i] < minV) minV = tempValues[i];
-        if (tempValues[i] > maxV) maxV = tempValues[i];
-      }
+  epd_draw_rect(GX, GY, GW, GH, 0, framebuffer_);
 
-      if (fabs(maxV - minV) < 0.01f) {
-        maxV = minV + 0.01f;
-      }
-
-      for (size_t i = 1; i < tempCount; ++i) {
-        const int x1 = graphX + static_cast<int>((i - 1) * (graphW - 2) / (tempCount - 1)) + 1;
-        const int x2 = graphX + static_cast<int>(i * (graphW - 2) / (tempCount - 1)) + 1;
-
-        const float norm1 = (tempValues[i - 1] - minV) / (maxV - minV);
-        const float norm2 = (tempValues[i] - minV) / (maxV - minV);
-
-        const int y1 = graphY + graphH - 1 - static_cast<int>(norm1 * (graphH - 2));
-        const int y2 = graphY + graphH - 1 - static_cast<int>(norm2 * (graphH - 2));
-
-        display_.drawLine(x1, y1, x2, y2, GxEPD_BLACK);
-      }
-
-      display_.setCursor(graphX + 4, graphY + 14);
-      display_.printf("max %.2f C", maxV);
-      display_.setCursor(graphX + 4, graphY + graphH - 6);
-      display_.printf("min %.2f C", minV);
-    } else {
-      display_.setCursor(graphX + 10, graphY + 20);
-      display_.print("Collecting data for graph...");
+  if (tempCount > 1) {
+    float minT = tempValues[0], maxT = tempValues[0];
+    for (size_t i = 1; i < tempCount; i++) {
+      if (tempValues[i] < minT) minT = tempValues[i];
+      if (tempValues[i] > maxT) maxT = tempValues[i];
     }
-  } while (display_.nextPage());
+    float range = maxT - minT;
+    if (range < 0.5f) range = 0.5f;
+
+    const int32_t INNER_W = GW - 2;
+    const int32_t INNER_H = GH - 2;
+
+    for (int32_t col = 0; col < INNER_W; col++) {
+      size_t idx = ((size_t)col * tempCount) / (size_t)INNER_W;
+      if (idx >= tempCount) idx = tempCount - 1;
+      int32_t barH = (int32_t)((tempValues[idx] - minT) / range * (float)INNER_H);
+      if (barH > INNER_H) barH = INNER_H;
+      if (barH > 0) {
+        epd_draw_vline(GX + 1 + col, GY + GH - 1 - barH, barH, 0, framebuffer_);
+      }
+    }
+
+    cx = GX + 4; cy = GY + GH - 4;
+    snprintf(buf, sizeof(buf), "%.1fC", minT);
+    writeln((GFXfont*)&FiraSans, buf, &cx, &cy, framebuffer_);
+
+    cx = GX + GW - 100; cy = GY + 36;
+    snprintf(buf, sizeof(buf), "%.1fC", maxT);
+    writeln((GFXfont*)&FiraSans, buf, &cx, &cy, framebuffer_);
+  } else {
+    cx = GX + 10; cy = GY + 50;
+    writeln((GFXfont*)&FiraSans, "Collecting data...", &cx, &cy, framebuffer_);
+  }
+
+  epd_poweron();
+  epd_draw_grayscale_image(epd_full_screen(), framebuffer_);
+  epd_poweroff();
 
   Serial.println("[Display] Full refresh complete");
 }

@@ -1,0 +1,47 @@
+#include <Arduino.h>
+#include <Wire.h>
+
+void setup() {
+  Serial.begin(115200);
+  delay(1500);
+  
+  Serial.println("\n=== I2C Device Register Dump ===");
+  Wire.begin(18, 17);
+  
+  uint8_t addr = 0x51;
+  Serial.printf("Reading registers from address 0x%02X:\n", addr);
+  
+  Wire.beginTransmission(addr);
+  Wire.write(0x00);  // Start at register 0
+  Wire.endTransmission();
+  
+  // Read first 16 bytes
+  Wire.requestFrom(addr, 16);
+  for (int i = 0; i < 16; i++) {
+    if (Wire.available()) {
+      uint8_t byte = Wire.read();
+      Serial.printf("  [0x%02X] = 0x%02X (%3d)\n", i, byte, byte);
+    }
+  }
+  
+  // Specifically read BME280 chip ID (should be at 0xD0)
+  Serial.println("\nReading BME280 Chip ID register (0xD0):");
+  Wire.beginTransmission(addr);
+  Wire.write(0xD0);
+  Wire.endTransmission();
+  
+  Wire.requestFrom(addr, 1);
+  if (Wire.available()) {
+    uint8_t chipId = Wire.read();
+    Serial.printf("  Chip ID: 0x%02X\n", chipId);
+    if (chipId == 0x60) {
+      Serial.println("  → This IS a BME280! (ID 0x60)");
+    } else {
+      Serial.printf("  → Unknown chip! (expected 0x60 for BME280)\n");
+    }
+  }
+}
+
+void loop() {
+  delay(5000);
+}

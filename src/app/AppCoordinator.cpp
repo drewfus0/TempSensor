@@ -13,12 +13,7 @@ void AppCoordinator::begin() {
   sensorManager_.begin(AppConfig::I2C_SDA_PIN, AppConfig::I2C_SCL_PIN, AppConfig::BME280_I2C_ADDR);
   loggerManager_.begin(
       AppConfig::SD_CS_PIN, AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
-  displayManager_.begin(AppConfig::EINK_CS_PIN,
-                        AppConfig::EINK_DC_PIN,
-                        AppConfig::EINK_RST_PIN,
-                        AppConfig::EINK_BUSY_PIN,
-                        AppConfig::EINK_SCK_PIN,
-                        AppConfig::EINK_MOSI_PIN);
+  displayManager_.begin();
   webManager_.begin(AppConfig::WIFI_SSID, AppConfig::WIFI_PASSWORD, AppConfig::HOSTNAME);
   timeManager_.begin();
 

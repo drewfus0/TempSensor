@@ -1,0 +1,46 @@
+#include <Arduino.h>
+#include <Wire.h>
+
+void setup() {
+  Serial.begin(115200);
+  delay(1500);
+  
+  Serial.println("\n=== FULL I2C BUS SCAN + CHIP ID CHECK ===\n");
+  Wire.begin(18, 17);
+  
+  byte error, address;
+  int nDevices = 0;
+
+  for (address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+
+    if (error == 0) {
+      Serial.printf("Found I2C device at 0x%02X (%d)\n", address, address);
+      
+      // Try to read chip ID from common sensors
+      Wire.beginTransmission(address);
+      Wire.write(0xD0);  // BME280 chip ID register
+      Wire.endTransmission();
+      
+      Wire.requestFrom(address, 1);
+      if (Wire.available()) {
+        uint8_t chipId = Wire.read();
+        Serial.printf("  └─ Register 0xD0 = 0x%02X", chipId);
+        
+        if (chipId == 0x60) Serial.println(" ← BME280!");
+        else if (chipId == 0x58) Serial.println(" ← BMP280!");
+        else if (chipId == 0x08) Serial.println(" ← RTC or other (ID 0x08)");
+        else Serial.println();
+      }
+      
+      nDevices++;
+    }
+  }
+
+  Serial.printf("\nTotal devices found: %d\n", nDevices);
+}
+
+void loop() {
+  delay(5000);
+}

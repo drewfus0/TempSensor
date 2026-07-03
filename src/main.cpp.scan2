@@ -1,0 +1,60 @@
+#include <Arduino.h>
+#include <Wire.h>
+
+TwoWire i2c0 = TwoWire(0);  // I2C bus 0 (default)
+TwoWire i2c1 = TwoWire(1);  // I2C bus 1 (secondary)
+
+void scanBus(TwoWire& wire, const char* busName) {
+  Serial.printf("\nScanning %s...\n", busName);
+  
+  byte error, address;
+  int nDevices = 0;
+
+  for (address = 1; address < 127; address++) {
+    wire.beginTransmission(address);
+    error = wire.endTransmission();
+
+    if (error == 0) {
+      Serial.printf("  Found: 0x%02X", address);
+      
+      wire.beginTransmission(address);
+      wire.write(0xD0);
+      wire.endTransmission();
+      
+      wire.requestFrom(address, 1);
+      if (wire.available()) {
+        uint8_t id = wire.read();
+        if (id == 0x60) Serial.println(" ← BME280!");
+        else Serial.printf(" (ID: 0x%02X)\n", id);
+      } else {
+        Serial.println();
+      }
+      
+      nDevices++;
+    }
+  }
+  
+  Serial.printf("  Total: %d device(s)\n", nDevices);
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1500);
+  
+  Serial.println("\n=== SCANNING ALL I2C BUSES ===");
+  
+  // I2C Bus 0 (custom pins - GPIO18/17)
+  Serial.println("Bus 0: GPIO18 (SDA), GPIO17 (SCL)");
+  i2c0.begin(18, 17);
+  scanBus(i2c0, "I2C Bus 0");
+  
+  // I2C Bus 1 (default/alternate pins)
+  // On ESP32-S3 these default to GPIO19/20 or GPIO9/8
+  Serial.println("\nBus 1: Default pins");
+  i2c1.begin();  // Use default pins
+  scanBus(i2c1, "I2C Bus 1");
+}
+
+void loop() {
+  delay(5000);
+}
