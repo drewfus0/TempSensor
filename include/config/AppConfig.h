@@ -6,7 +6,7 @@ namespace AppConfig {
 
 constexpr uint32_t SAMPLE_INTERVAL_MS = 1000;
 constexpr uint32_t LOG_FLUSH_INTERVAL_MS = 60000;
-constexpr uint32_t DISPLAY_REFRESH_INTERVAL_MS = 30UL * 60UL * 1000UL;
+constexpr uint32_t DISPLAY_REFRESH_INTERVAL_MS = SAMPLE_INTERVAL_MS;
 constexpr uint32_t DIAGNOSTICS_INTERVAL_MS = 30000;
 constexpr uint32_t NTP_RETRY_INTERVAL_MS = 30000;
 
