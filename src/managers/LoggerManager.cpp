@@ -3,6 +3,10 @@
 #include "config/AppConfig.h"
 
 bool LoggerManager::begin(int sdCsPin, int sckPin, int misoPin, int mosiPin) {
+  (void)sckPin;
+  (void)misoPin;
+  (void)mosiPin;
+
   sdHealthy_ = initSdWithRetries(sdCsPin);
 
   Serial.printf("[Logger] SD init: %s (%s)\n", sdHealthy_ ? "ok" : "failed", sdDiagDetail_);

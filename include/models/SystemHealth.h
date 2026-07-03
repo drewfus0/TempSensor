@@ -6,8 +6,6 @@ struct SystemHealth {
   uint32_t uptimeSeconds = 0;
   uint32_t freeHeapBytes = 0;
   uint32_t largestFreeBlockBytes = 0;
-  size_t graphBufferUsage = 0;
-  size_t graphBufferCapacity = 0;
   size_t logQueueDepth = 0;
   size_t logQueueCapacity = 0;
   uint32_t droppedLogSamples = 0;

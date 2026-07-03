@@ -1,13 +1,7 @@
 #include "app/AppCoordinator.h"
 
-#include <SPI.h>
-
-#if defined(ESP8266)
 #include <ESP8266WiFi.h>
-#else
-#include <WiFi.h>
-#include <esp_heap_caps.h>
-#endif
+#include <SPI.h>
 
 void AppCoordinator::begin() {
   Serial.println("\n[App] Booting TempSensor milestone-1 firmware...");
@@ -15,12 +9,8 @@ void AppCoordinator::begin() {
   displayManager_.begin(AppConfig::I2C_SDA_PIN, AppConfig::I2C_SCL_PIN);
   displayManager_.showStartupStatus("Boot", "Initializing...");
 
-  // Initialise the shared SPI bus once with all four pins before any manager uses it.
-#if defined(ESP8266)
+  // Initialize shared SPI bus for ESP8266 hardware SPI pins.
   SPI.begin();
-#else
-  SPI.begin(AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
-#endif
 
   const bool sensorOk =
       sensorManager_.begin(AppConfig::I2C_SDA_PIN, AppConfig::I2C_SCL_PIN, AppConfig::BME280_I2C_ADDR);
@@ -28,9 +18,7 @@ void AppCoordinator::begin() {
 
   const bool sdOk = loggerManager_.begin(
       AppConfig::SD_CS_PIN, AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
-  char sdExtra[64]{};
-  snprintf(sdExtra, sizeof(sdExtra), "%s", loggerManager_.getSdDiagDetail());
-  displayManager_.showStartupStatus("SD", sdOk ? "Ready" : "Init failed", sdExtra, !sdOk);
+  displayManager_.showStartupStatus("SD", sdOk ? "Ready" : "Init failed", loggerManager_.getSdDiagDetail(), !sdOk);
 
   webManager_.begin(AppConfig::WIFI_SSID, AppConfig::WIFI_PASSWORD, AppConfig::HOSTNAME);
   const bool wifiConnected = (WiFi.status() == WL_CONNECTED);
@@ -132,15 +120,7 @@ void AppCoordinator::handleDiagnostics(uint32_t nowMs) {
 void AppCoordinator::refreshHealth(uint32_t nowMs) {
   health_.uptimeSeconds = nowMs / 1000;
   health_.freeHeapBytes = ESP.getFreeHeap();
-
-#if defined(ESP8266)
   health_.largestFreeBlockBytes = ESP.getMaxFreeBlockSize();
-#else
-  health_.largestFreeBlockBytes = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-#endif
-
-  health_.graphBufferUsage = 0;
-  health_.graphBufferCapacity = 0;
   health_.logQueueDepth = loggerManager_.queueDepth();
   health_.logQueueCapacity = loggerManager_.queueCapacity();
   health_.droppedLogSamples = loggerManager_.droppedSamples();

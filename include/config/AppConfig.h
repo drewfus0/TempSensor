@@ -10,7 +10,6 @@ constexpr uint32_t DISPLAY_REFRESH_INTERVAL_MS = 30UL * 60UL * 1000UL;
 constexpr uint32_t DIAGNOSTICS_INTERVAL_MS = 30000;
 constexpr uint32_t NTP_RETRY_INTERVAL_MS = 30000;
 
-constexpr size_t MAX_RING_BUFFER_SIZE = 1800;
 constexpr size_t MAX_LOG_QUEUE_SIZE = 512;
 
 constexpr char WIFI_SSID[] = "ImWifiRick";
@@ -35,6 +34,8 @@ constexpr int BUTTON_PIN = 21;
 
 constexpr uint16_t DISPLAY_WIDTH = 128;
 constexpr uint16_t DISPLAY_HEIGHT = 64;
+constexpr bool DISPLAY_SHOW_DIMENSION_PROBE_ON_BOOT = true;
+constexpr uint16_t DISPLAY_DIMENSION_PROBE_MS = 2500;
 
 constexpr char LOG_FILE_PATH[] = "/logs/data.csv";
 constexpr char EVENT_FILE_PATH[] = "/logs/events.csv";

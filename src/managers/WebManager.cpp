@@ -1,12 +1,7 @@
 #include "managers/WebManager.h"
 
 #include <ArduinoJson.h>
-
-#if defined(ESP8266)
 #include <ESP8266WiFi.h>
-#else
-#include <WiFi.h>
-#endif
 
 bool WebManager::begin(const char* ssid, const char* password, const char* hostname) {
   WiFi.mode(WIFI_STA);
@@ -87,8 +82,6 @@ void WebManager::handleHealthJson() {
     doc["uptime_s"] = health_->uptimeSeconds;
     doc["free_heap_bytes"] = health_->freeHeapBytes;
     doc["largest_free_block_bytes"] = health_->largestFreeBlockBytes;
-    doc["graph_buffer_usage"] = health_->graphBufferUsage;
-    doc["graph_buffer_capacity"] = health_->graphBufferCapacity;
     doc["log_queue_depth"] = health_->logQueueDepth;
     doc["log_queue_capacity"] = health_->logQueueCapacity;
     doc["dropped_log_samples"] = health_->droppedLogSamples;
