@@ -1,24 +1,52 @@
 #include "app/AppCoordinator.h"
 
 #include <SPI.h>
+
+#if defined(ESP8266)
+#include <ESP8266WiFi.h>
+#else
 #include <WiFi.h>
 #include <esp_heap_caps.h>
+#endif
 
 void AppCoordinator::begin() {
   Serial.println("\n[App] Booting TempSensor milestone-1 firmware...");
 
-  // Initialise the shared SPI bus once with all four pins before any manager uses it.
-  SPI.begin(AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
+  displayManager_.begin(AppConfig::I2C_SDA_PIN, AppConfig::I2C_SCL_PIN);
+  displayManager_.showStartupStatus("Boot", "Initializing...");
 
-  sensorManager_.begin(AppConfig::I2C_SDA_PIN, AppConfig::I2C_SCL_PIN, AppConfig::BME280_I2C_ADDR);
-  loggerManager_.begin(
+  // Initialise the shared SPI bus once with all four pins before any manager uses it.
+#if defined(ESP8266)
+  SPI.begin();
+#else
+  SPI.begin(AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
+#endif
+
+  const bool sensorOk =
+      sensorManager_.begin(AppConfig::I2C_SDA_PIN, AppConfig::I2C_SCL_PIN, AppConfig::BME280_I2C_ADDR);
+  displayManager_.showStartupStatus("Sensor", sensorManager_.getStatus(), nullptr, !sensorOk);
+
+  const bool sdOk = loggerManager_.begin(
       AppConfig::SD_CS_PIN, AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
-  displayManager_.begin();
+  displayManager_.showStartupStatus("SD", sdOk ? "Ready" : "Init failed", nullptr, !sdOk);
+
   webManager_.begin(AppConfig::WIFI_SSID, AppConfig::WIFI_PASSWORD, AppConfig::HOSTNAME);
+  const bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+  String wifiDetail = wifiConnected ? WiFi.localIP().toString() : String("Offline mode");
+  displayManager_.showStartupStatus("WiFi", wifiConnected ? "Connected" : "Not connected", wifiDetail.c_str());
+
   timeManager_.begin();
+  displayManager_.showStartupStatus("NTP", timeManager_.isNtpSynced() ? "Synced" : "Estimated clock",
+                                    nullptr, !timeManager_.isNtpSynced());
 
   webManager_.setLatestSample(&latestSample_);
   webManager_.setHealth(&health_);
+
+  if (!sensorOk || !sdOk) {
+    displayManager_.showStartupStatus("Startup", "Completed with errors", nullptr, true);
+  } else {
+    displayManager_.showStartupStatus("Startup", "All systems ready");
+  }
 
   refreshHealth(millis());
   Serial.println("[App] Startup complete");
@@ -69,7 +97,6 @@ void AppCoordinator::handleSampling(uint32_t nowMs) {
   sample.uptimeSeconds = nowMs / 1000;
 
   loggerManager_.enqueueSample(sample);
-  tempHistory_.push(tempC);
 
   latestSample_ = sample;
   hasSample_ = true;
@@ -86,10 +113,8 @@ void AppCoordinator::handleDisplayRefresh(uint32_t nowMs) {
   }
   lastDisplayMs_ = nowMs;
 
-  static float graphData[AppConfig::MAX_RING_BUFFER_SIZE]{};
-  const size_t copied = tempHistory_.copyTo(graphData, AppConfig::MAX_RING_BUFFER_SIZE);
-
-  displayManager_.render(latestSample_, graphData, copied, copied * (AppConfig::SAMPLE_INTERVAL_MS / 1000));
+  displayManager_.renderLatest(latestSample_, (WiFi.status() == WL_CONNECTED), timeManager_.isNtpSynced(),
+                               loggerManager_.isSdHealthy());
 }
 
 void AppCoordinator::handleDiagnostics(uint32_t nowMs) {
@@ -105,9 +130,15 @@ void AppCoordinator::handleDiagnostics(uint32_t nowMs) {
 void AppCoordinator::refreshHealth(uint32_t nowMs) {
   health_.uptimeSeconds = nowMs / 1000;
   health_.freeHeapBytes = ESP.getFreeHeap();
+
+#if defined(ESP8266)
+  health_.largestFreeBlockBytes = ESP.getMaxFreeBlockSize();
+#else
   health_.largestFreeBlockBytes = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-  health_.graphBufferUsage = tempHistory_.size();
-  health_.graphBufferCapacity = tempHistory_.capacity();
+#endif
+
+  health_.graphBufferUsage = 0;
+  health_.graphBufferCapacity = 0;
   health_.logQueueDepth = loggerManager_.queueDepth();
   health_.logQueueCapacity = loggerManager_.queueCapacity();
   health_.droppedLogSamples = loggerManager_.droppedSamples();

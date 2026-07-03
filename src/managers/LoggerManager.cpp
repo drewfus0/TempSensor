@@ -3,7 +3,7 @@
 #include "config/AppConfig.h"
 
 bool LoggerManager::begin(int sdCsPin, int sckPin, int misoPin, int mosiPin) {
-  sdHealthy_ = SD.begin(sdCsPin, SPI);
+  sdHealthy_ = SD.begin(sdCsPin);
   Serial.printf("[Logger] SD init: %s\n", sdHealthy_ ? "ok" : "failed");
 
   if (!sdHealthy_) {
@@ -44,7 +44,7 @@ bool LoggerManager::flush() {
     return false;
   }
 
-  File file = SD.open(AppConfig::LOG_FILE_PATH, FILE_APPEND);
+  File file = SD.open(AppConfig::LOG_FILE_PATH, "a");
   if (!file) {
     sdHealthy_ = false;
     Serial.println("[Logger] Failed to open CSV for append");
@@ -87,7 +87,7 @@ bool LoggerManager::logEvent(const char* eventName, const char* timestamp, Times
     return false;
   }
 
-  File file = SD.open(AppConfig::EVENT_FILE_PATH, FILE_APPEND);
+  File file = SD.open(AppConfig::EVENT_FILE_PATH, "a");
   if (!file) {
     sdHealthy_ = false;
     Serial.println("[Logger] Failed to append event log");

@@ -9,7 +9,6 @@
 #include "managers/WebManager.h"
 #include "models/Sample.h"
 #include "models/SystemHealth.h"
-#include "utils/RingBuffer.h"
 
 class AppCoordinator {
  public:
@@ -28,8 +27,6 @@ class AppCoordinator {
   DisplayManager displayManager_;
   WebManager webManager_;
   DiagnosticsManager diagnosticsManager_;
-
-  RingBuffer<float, AppConfig::MAX_RING_BUFFER_SIZE> tempHistory_;
 
   Sample latestSample_{};
   bool hasSample_ = false;

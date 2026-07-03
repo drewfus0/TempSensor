@@ -1,6 +1,12 @@
 #pragma once
 
+#if defined(ESP8266)
+#include <ESP8266WebServer.h>
+using TempWebServer = ESP8266WebServer;
+#else
 #include <WebServer.h>
+using TempWebServer = WebServer;
+#endif
 
 #include "models/Sample.h"
 #include "models/SystemHealth.h"
@@ -19,7 +25,7 @@ class WebManager {
   void handleLiveJson();
   void handleHealthJson();
 
-  WebServer server_{80};
+  TempWebServer server_{80};
   const Sample* latestSample_ = nullptr;
   const SystemHealth* health_ = nullptr;
 };

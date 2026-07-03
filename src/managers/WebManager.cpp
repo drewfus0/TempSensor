@@ -1,7 +1,12 @@
 #include "managers/WebManager.h"
 
 #include <ArduinoJson.h>
+
+#if defined(ESP8266)
+#include <ESP8266WiFi.h>
+#else
 #include <WiFi.h>
+#endif
 
 bool WebManager::begin(const char* ssid, const char* password, const char* hostname) {
   WiFi.mode(WIFI_STA);

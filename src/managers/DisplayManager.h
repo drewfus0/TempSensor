@@ -6,11 +6,11 @@
 
 class DisplayManager {
  public:
-  bool begin();
-  void render(const Sample& sample, const float* tempValues, size_t tempCount, uint32_t windowSeconds);
+  bool begin(int sdaPin, int sclPin);
+  void showStartupStatus(const char* stage, const char* detail, const char* extra = nullptr, bool isError = false);
+  void renderLatest(const Sample& sample, bool wifiConnected, bool ntpSynced, bool sdHealthy);
   bool isReady() const { return ready_; }
 
  private:
   bool ready_ = false;
-  uint8_t* framebuffer_ = nullptr;
 };
