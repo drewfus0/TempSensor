@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ESP8266WebServer.h>
+#include <SD.h>
 
 #include "models/Sample.h"
 #include "models/SystemHealth.h"
@@ -18,6 +19,9 @@ class WebManager {
   void handleRoot();
   void handleLiveJson();
   void handleHealthJson();
+  void handleSdTreeText();
+  void appendSdTree(File entry, String& out, uint8_t depth);
+  void appendIndent(String& out, uint8_t depth);
 
   ESP8266WebServer server_{80};
   const Sample* latestSample_ = nullptr;
