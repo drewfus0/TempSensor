@@ -3,8 +3,7 @@
 #include "config/AppConfig.h"
 
 bool LoggerManager::begin(int sdCsPin, int sckPin, int misoPin, int mosiPin) {
-  spiSd_.begin(sckPin, misoPin, mosiPin, sdCsPin);
-  sdHealthy_ = SD.begin(sdCsPin, spiSd_);
+  sdHealthy_ = SD.begin(sdCsPin, SPI);
   Serial.printf("[Logger] SD init: %s\n", sdHealthy_ ? "ok" : "failed");
 
   if (!sdHealthy_) {

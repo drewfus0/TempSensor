@@ -28,7 +28,6 @@ class LoggerManager {
   bool writeCsvHeaderIfMissing();
   bool writeEventHeaderIfMissing();
 
-  SPIClass spiSd_ = SPIClass(FSPI);
   RingBuffer<Sample, AppConfig::MAX_LOG_QUEUE_SIZE> queue_;
   bool sdHealthy_ = false;
   uint32_t droppedSamples_ = 0;

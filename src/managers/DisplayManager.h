@@ -14,10 +14,10 @@ class DisplayManager {
 
  private:
   bool ready_ = false;
-  GxEPD2_BW<GxEPD2_470_GDEY047T91, GxEPD2_470_GDEY047T91::HEIGHT> display_ =
-      GxEPD2_BW<GxEPD2_470_GDEY047T91, GxEPD2_470_GDEY047T91::HEIGHT>(
-          GxEPD2_470_GDEY047T91(AppConfig::EINK_CS_PIN,
-                                AppConfig::EINK_DC_PIN,
-                                AppConfig::EINK_RST_PIN,
-                                AppConfig::EINK_BUSY_PIN));
+  GxEPD2_BW<GxEPD2_1160_T91, GxEPD2_1160_T91::HEIGHT> display_ =
+      GxEPD2_BW<GxEPD2_1160_T91, GxEPD2_1160_T91::HEIGHT>(
+          GxEPD2_1160_T91(AppConfig::EINK_CS_PIN,
+                          AppConfig::EINK_DC_PIN,
+                          AppConfig::EINK_RST_PIN,
+                          AppConfig::EINK_BUSY_PIN));
 };

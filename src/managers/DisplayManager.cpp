@@ -5,7 +5,6 @@
 #include <SPI.h>
 
 bool DisplayManager::begin(int csPin, int dcPin, int rstPin, int busyPin, int sckPin, int mosiPin) {
-  SPI.begin(sckPin, -1, mosiPin, csPin);
   display_.init(115200, true, 2, false);
   display_.setRotation(1);
   display_.setTextColor(GxEPD_BLACK);

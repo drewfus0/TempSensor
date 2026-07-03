@@ -39,7 +39,7 @@ constexpr int EINK_SCK_PIN = 12;
 constexpr int EINK_MOSI_PIN = 11;
 
 constexpr uint16_t DISPLAY_WIDTH = 960;
-constexpr uint16_t DISPLAY_HEIGHT = 540;
+constexpr uint16_t DISPLAY_HEIGHT = 640;
 
 constexpr char LOG_FILE_PATH[] = "/logs/data.csv";
 constexpr char EVENT_FILE_PATH[] = "/logs/events.csv";

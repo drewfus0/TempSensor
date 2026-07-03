@@ -1,10 +1,14 @@
 #include "app/AppCoordinator.h"
 
+#include <SPI.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
 
 void AppCoordinator::begin() {
   Serial.println("\n[App] Booting TempSensor milestone-1 firmware...");
+
+  // Initialise the shared SPI bus once with all four pins before any manager uses it.
+  SPI.begin(AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
 
   sensorManager_.begin(AppConfig::I2C_SDA_PIN, AppConfig::I2C_SCL_PIN, AppConfig::BME280_I2C_ADDR);
   loggerManager_.begin(
