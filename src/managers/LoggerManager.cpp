@@ -3,14 +3,17 @@
 #include "config/AppConfig.h"
 
 bool LoggerManager::begin(int sdCsPin, int sckPin, int misoPin, int mosiPin) {
-  sdHealthy_ = SD.begin(sdCsPin);
-  Serial.printf("[Logger] SD init: %s\n", sdHealthy_ ? "ok" : "failed");
+  sdHealthy_ = initSdWithRetries(sdCsPin);
+
+  Serial.printf("[Logger] SD init: %s (%s)\n", sdHealthy_ ? "ok" : "failed", sdDiagDetail_);
 
   if (!sdHealthy_) {
     return false;
   }
 
   if (!ensurePathsAndHeaders()) {
+    snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "FS/header setup failed (format?)");
+    Serial.printf("[Logger] SD post-init error: %s\n", sdDiagDetail_);
     sdHealthy_ = false;
     return false;
   }
@@ -105,6 +108,28 @@ bool LoggerManager::logEvent(const char* eventName, const char* timestamp, Times
   }
 
   return true;
+}
+
+bool LoggerManager::initSdWithRetries(int sdCsPin) {
+  if (SD.begin(sdCsPin)) {
+    snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "Init @ default speed");
+    return true;
+  }
+
+  delay(100);
+  if (SD.begin(sdCsPin, SPI_HALF_SPEED)) {
+    snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "Init @ half speed");
+    return true;
+  }
+
+  delay(100);
+  if (SD.begin(sdCsPin, SPI_QUARTER_SPEED)) {
+    snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "Init @ quarter speed");
+    return true;
+  }
+
+  snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "No card / wiring / format issue");
+  return false;
 }
 
 bool LoggerManager::ensurePathsAndHeaders() {

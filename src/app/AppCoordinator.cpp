@@ -28,7 +28,9 @@ void AppCoordinator::begin() {
 
   const bool sdOk = loggerManager_.begin(
       AppConfig::SD_CS_PIN, AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
-  displayManager_.showStartupStatus("SD", sdOk ? "Ready" : "Init failed", nullptr, !sdOk);
+  char sdExtra[64]{};
+  snprintf(sdExtra, sizeof(sdExtra), "%s", loggerManager_.getSdDiagDetail());
+  displayManager_.showStartupStatus("SD", sdOk ? "Ready" : "Init failed", sdExtra, !sdOk);
 
   webManager_.begin(AppConfig::WIFI_SSID, AppConfig::WIFI_PASSWORD, AppConfig::HOSTNAME);
   const bool wifiConnected = (WiFi.status() == WL_CONNECTED);

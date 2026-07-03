@@ -21,8 +21,10 @@ class LoggerManager {
   size_t queueCapacity() const { return queue_.capacity(); }
   uint32_t droppedSamples() const { return droppedSamples_; }
   bool isSdHealthy() const { return sdHealthy_; }
+  const char* getSdDiagDetail() const { return sdDiagDetail_; }
 
  private:
+  bool initSdWithRetries(int sdCsPin);
   bool ensurePathsAndHeaders();
   bool ensureDir(const char* path);
   bool writeCsvHeaderIfMissing();
@@ -30,6 +32,7 @@ class LoggerManager {
 
   RingBuffer<Sample, AppConfig::MAX_LOG_QUEUE_SIZE> queue_;
   bool sdHealthy_ = false;
+  char sdDiagDetail_[96] = "Not initialized";
   uint32_t droppedSamples_ = 0;
   uint32_t lastFlushMs_ = 0;
 };
