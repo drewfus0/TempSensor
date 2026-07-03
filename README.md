@@ -21,7 +21,7 @@ I2C shared bus:
 - SDA: D2 (GPIO4)
 
 SPI for SD:
-- CS: D8 (GPIO15)
+- CS: D8 (GPIO15), with shield CS rerouted from default D4 pad
 - SCK: D5 (GPIO14)
 - MISO: D6 (GPIO12)
 - MOSI: D7 (GPIO13)
@@ -53,6 +53,6 @@ Commands:
 ## Next Development Steps
 
 1. Replace existing display manager behavior with SSD1306 OLED rendering.
-2. Verify SD shield initialization on D8 CS.
+2. Verify SD shield initialization on D8/GPIO15 CS (D4 pad rerouted by jumper).
 3. Run sensor + logging + web endpoint smoke test on ESP8266 target.
 4. Tune memory usage for ESP8266 constraints.

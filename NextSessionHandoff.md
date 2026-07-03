@@ -11,7 +11,7 @@ Purpose: Capture current status before pausing work.
 
 ## What Was Verified
 1. PlatformIO target now points to ESP8266 D1 mini Pro.
-2. Pin mapping now uses D1/D2 for I2C and D5-D8 for SD SPI.
+2. Pin mapping now uses D1/D2 for I2C and D5/D6/D7 plus D8 for SD SPI (CS rerouted from shield D4 pad to D8/GPIO15).
 3. Legacy e-ink-specific notes are now considered obsolete.
 
 ## Current Build Risk

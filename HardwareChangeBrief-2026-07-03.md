@@ -19,7 +19,7 @@ I2C (shared by OLED + BME280):
 - SCL: D1 / GPIO5
 
 SPI (microSD shield):
-- CS: D8 / GPIO15
+- CS: D8 / GPIO15 (shield default D4 CS rerouted by jumper)
 - SCK: D5 / GPIO14
 - MISO: D6 / GPIO12
 - MOSI: D7 / GPIO13

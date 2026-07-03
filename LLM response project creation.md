@@ -6,7 +6,7 @@ Date: 2026-07-03
 - Platform target: ESP8266 LOLIN D1 mini Pro (`d1_mini_pro`)
 - Sensor bus: I2C on D1/D2 (GPIO5/GPIO4)
 - Display: OLED Shield on shared I2C
-- Storage: microSD Shield on SPI (D5-D8 mapping)
+- Storage: microSD Shield on SPI (CS on D8/GPIO15 via D4-pad jumper, SCK/MISO/MOSI on D5/D6/D7)
 
 ## Architecture Direction
 - Keep the existing modular manager structure.
