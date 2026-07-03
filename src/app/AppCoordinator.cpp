@@ -103,8 +103,15 @@ void AppCoordinator::handleDisplayRefresh(uint32_t nowMs) {
   }
   lastDisplayMs_ = nowMs;
 
+  char ipBuf[20]{};
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFi.localIP().toString().toCharArray(ipBuf, sizeof(ipBuf));
+  } else {
+    strncpy(ipBuf, "0.0.0.0", sizeof(ipBuf) - 1);
+  }
+
   displayManager_.renderLatest(latestSample_, (WiFi.status() == WL_CONNECTED), timeManager_.isNtpSynced(),
-                               loggerManager_.isSdHealthy());
+                               loggerManager_.isSdHealthy(), ipBuf);
 }
 
 void AppCoordinator::handleDiagnostics(uint32_t nowMs) {

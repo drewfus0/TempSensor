@@ -18,8 +18,7 @@ constexpr char HOSTNAME[] = "tempsensor-d1mini";
 
 constexpr char NTP_SERVER_1[] = "pool.ntp.org";
 constexpr char NTP_SERVER_2[] = "time.nist.gov";
-constexpr long GMT_OFFSET_SECONDS = 0;
-constexpr int DST_OFFSET_SECONDS = 0;
+constexpr char TIMEZONE_MELBOURNE[] = "AEST-10AEDT,M10.1.0,M4.1.0/3";
 
 constexpr uint8_t BME280_I2C_ADDR = 0x76;
 constexpr int I2C_SDA_PIN = 4;   // D2
@@ -32,9 +31,9 @@ constexpr int SD_MISO_PIN = 12;  // D6
 
 constexpr int BUTTON_PIN = 21;
 
-constexpr uint16_t DISPLAY_WIDTH = 128;
-constexpr uint16_t DISPLAY_HEIGHT = 64;
-constexpr bool DISPLAY_SHOW_DIMENSION_PROBE_ON_BOOT = true;
+constexpr uint16_t DISPLAY_WIDTH = 64;
+constexpr uint16_t DISPLAY_HEIGHT = 48;
+constexpr bool DISPLAY_SHOW_DIMENSION_PROBE_ON_BOOT = false;
 constexpr uint16_t DISPLAY_DIMENSION_PROBE_MS = 2500;
 
 constexpr char LOG_FILE_PATH[] = "/logs/data.csv";

@@ -5,10 +5,7 @@
 #include "config/AppConfig.h"
 
 void TimeManager::begin() {
-  configTime(AppConfig::GMT_OFFSET_SECONDS,
-             AppConfig::DST_OFFSET_SECONDS,
-             AppConfig::NTP_SERVER_1,
-             AppConfig::NTP_SERVER_2);
+  configTzTime(AppConfig::TIMEZONE_MELBOURNE, AppConfig::NTP_SERVER_1, AppConfig::NTP_SERVER_2);
 
   ntpSynced_ = trySyncTime();
   Serial.printf("[Time] NTP initial sync: %s\n", ntpSynced_ ? "ok" : "not available");
@@ -56,6 +53,6 @@ bool TimeManager::trySyncTime() {
 
 void TimeManager::formatEpoch(time_t epochSeconds, char* out, size_t outSize) const {
   struct tm timeInfo;
-  gmtime_r(&epochSeconds, &timeInfo);
-  strftime(out, outSize, "%Y-%m-%dT%H:%M:%SZ", &timeInfo);
+  localtime_r(&epochSeconds, &timeInfo);
+  strftime(out, outSize, "%Y-%m-%d %H:%M:%S", &timeInfo);
 }
