@@ -49,35 +49,539 @@ void WebManager::registerRoutes() {
 }
 
 void WebManager::handleRoot() {
-  static const char html[] =
-      "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-      "<title>TempSensor Status</title><style>body{font-family:monospace;margin:20px;background:#f2f4f7;color:#20252d}"
-      "h1{margin-bottom:8px}.card{background:#fff;padding:16px;border:1px solid #d3d7de;border-radius:8px;margin-bottom:12px}"
-      "pre{white-space:pre-wrap;overflow:auto;max-height:320px}</style></head><body><h1>TempSensor Local Status</h1>"
-      "<div class='card'><h2>Live Sensor</h2><pre id='live'>loading...</pre></div>"
-      "<div class='card'><h2>Health</h2><pre id='health'>loading...</pre></div>"
-      "<div class='card'><h2>Config</h2><pre id='cfg'>loading...</pre></div>"
-      "<div class='card'><h2>Logs</h2><pre id='logs'>loading...</pre></div>"
-      "<div class='card'><h2>Events (latest)</h2><pre id='events'>loading...</pre></div>"
-      "<div class='card'><h2>History (temp_c)</h2><pre id='history'>loading...</pre></div>"
-      "<div class='card'><h2>SD Card Tree</h2><pre id='sdtree'>loading...</pre></div>"
-      "<script>async function pull(){const a=await fetch('/api/live').then(r=>r.json());"
-      "const b=await fetch('/api/health').then(r=>r.json());"
-      "const c=await fetch('/api/config').then(r=>r.json());"
-      "const d=await fetch('/api/logs').then(r=>r.json());"
-      "const e=await fetch('/api/events?limit=10').then(r=>r.json());"
-      "const f=await fetch('/api/history?metric=temp_c&max_points=20').then(r=>r.json());"
-      "const g=await fetch('/api/sd-tree').then(r=>r.text());"
-      "document.getElementById('live').textContent=JSON.stringify(a,null,2);"
-      "document.getElementById('health').textContent=JSON.stringify(b,null,2);"
-      "document.getElementById('cfg').textContent=JSON.stringify(c,null,2);"
-      "document.getElementById('logs').textContent=JSON.stringify(d,null,2);"
-      "document.getElementById('events').textContent=JSON.stringify(e,null,2);"
-      "document.getElementById('history').textContent=JSON.stringify(f,null,2);"
-      "document.getElementById('sdtree').textContent=g;}"
-      "pull();setInterval(pull,5000);</script></body></html>";
+  static const char html[] PROGMEM = R"HTML(
+<!doctype html>
+<html>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width,initial-scale=1'>
+  <title>TempSensor Dashboard</title>
+  <style>
+    :root {
+      --bg: #f2f4f7;
+      --ink: #1e2530;
+      --sub: #4a5668;
+      --card: #ffffff;
+      --line: #d2d9e3;
+      --accent: #0d7a8a;
+      --ok: #207542;
+      --bad: #8f1f28;
+      --warn: #9f6a00;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: "Consolas", "Liberation Mono", "DejaVu Sans Mono", monospace;
+      background: linear-gradient(180deg, #eef2f8 0%, var(--bg) 100%);
+      color: var(--ink);
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; }
+    .head {
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.2rem;
+      letter-spacing: 0.02em;
+    }
+    .pills { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 0.8rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 12px;
+    }
+    .col { display: grid; gap: 12px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .card h2 {
+      margin: 0 0 8px 0;
+      font-size: 0.95rem;
+      color: var(--sub);
+    }
+    .kv {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 4px 8px;
+      font-size: 0.88rem;
+    }
+    .k { color: var(--sub); }
+    .v { font-weight: 600; }
+    .ok { color: var(--ok); }
+    .bad { color: var(--bad); }
+    .warn { color: var(--warn); }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    label {
+      display: grid;
+      gap: 4px;
+      font-size: 0.8rem;
+      color: var(--sub);
+    }
+    input, select, button {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font: inherit;
+      background: #fff;
+      color: var(--ink);
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      cursor: pointer;
+      font-weight: 700;
+    }
+    canvas {
+      width: 100%;
+      height: 240px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .meta { margin-top: 8px; font-size: 0.78rem; color: var(--sub); }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow: auto;
+      max-height: 220px;
+      font-size: 0.8rem;
+    }
+    .logs a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .logs a:hover { text-decoration: underline; }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .controls { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class='wrap'>
+    <div class='head'>
+      <h1>TempSensor Local Dashboard</h1>
+      <div class='pills'>
+        <span class='pill' id='pillWifi'>WiFi: ?</span>
+        <span class='pill' id='pillSd'>SD: ?</span>
+        <span class='pill' id='pillNtp'>NTP: ?</span>
+        <span class='pill' id='pillIp'>IP: ?</span>
+        <span class='pill' id='pillRef'>Updated: -</span>
+      </div>
+    </div>
 
-  server_.send(200, "text/html", html);
+    <div class='grid'>
+      <div class='col'>
+        <section class='card'>
+          <h2>Live Snapshot</h2>
+          <div class='kv' id='liveKv'></div>
+        </section>
+        <section class='card'>
+          <h2>Health Snapshot</h2>
+          <div class='kv' id='healthKv'></div>
+        </section>
+        <section class='card'>
+          <h2>Config (Phase 1 API)</h2>
+          <pre id='cfg'>loading...</pre>
+        </section>
+      </div>
+
+      <div class='col'>
+        <section class='card'>
+          <h2>Historical Chart</h2>
+          <div class='controls'>
+            <label>Metric
+              <select id='metric'>
+                <option value='temp_c'>Temperature (C)</option>
+                <option value='humidity_pct'>Humidity (%)</option>
+                <option value='pressure_hpa'>Pressure (hPa)</option>
+              </select>
+            </label>
+            <label>Range
+              <select id='range'>
+                <option value='15m'>Last 15 min</option>
+                <option value='1h' selected>Last 1 hour</option>
+                <option value='6h'>Last 6 hours</option>
+                <option value='24h'>Last 24 hours</option>
+                <option value='custom'>Custom</option>
+              </select>
+            </label>
+            <label>Start (local)
+              <input id='start' type='datetime-local'>
+            </label>
+            <label>End (local)
+              <input id='end' type='datetime-local'>
+            </label>
+            <label>Max points
+              <input id='maxPoints' type='number' min='20' max='1000' value='300'>
+            </label>
+            <label>Load
+              <button id='btnLoad' type='button'>Refresh History</button>
+            </label>
+          </div>
+          <canvas id='chart' width='720' height='240'></canvas>
+          <div class='meta' id='historyMeta'>No data loaded yet.</div>
+        </section>
+
+        <section class='card'>
+          <h2>Logs</h2>
+          <div class='logs' id='logs'>loading...</div>
+        </section>
+
+        <section class='card'>
+          <h2>Events (latest)</h2>
+          <pre id='events'>loading...</pre>
+        </section>
+
+        <section class='card'>
+          <h2>SD Card Tree</h2>
+          <pre id='sdtree'>loading...</pre>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function setText(id, text) {
+      $(id).textContent = text;
+    }
+
+    function setHtml(id, html) {
+      $(id).innerHTML = html;
+    }
+
+    async function fetchJson(url) {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error(url + ' -> HTTP ' + res.status);
+      }
+      return await res.json();
+    }
+
+    async function fetchText(url) {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error(url + ' -> HTTP ' + res.status);
+      }
+      return await res.text();
+    }
+
+    function stampNow() {
+      const d = new Date();
+      const p = (n) => String(n).padStart(2, '0');
+      return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+
+    function fmtLocalTs(date) {
+      const p = (n) => String(n).padStart(2, '0');
+      return date.getFullYear() + '-' + p(date.getMonth() + 1) + '-' + p(date.getDate()) +
+        ' ' + p(date.getHours()) + ':' + p(date.getMinutes()) + ':' + p(date.getSeconds());
+    }
+
+    function kvHtml(obj, order) {
+      let out = '';
+      for (const key of order) {
+        const val = Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : '-';
+        out += '<div class="k">' + key + '</div><div class="v">' + val + '</div>';
+      }
+      return out;
+    }
+
+    function updatePills(live, health) {
+      const wifi = health.wifi_connected ? 'UP' : 'DOWN';
+      const sd = health.sd_healthy ? 'OK' : 'BAD';
+      const ntp = health.ntp_synced ? 'SYNC' : 'EST';
+
+      setText('pillWifi', 'WiFi: ' + wifi);
+      setText('pillSd', 'SD: ' + sd);
+      setText('pillNtp', 'NTP: ' + ntp);
+
+      let ip = '-';
+      if (live && live.has_sample && typeof live.ip === 'string') {
+        ip = live.ip;
+      }
+      setText('pillIp', 'IP: ' + ip);
+      setText('pillRef', 'Updated: ' + stampNow());
+    }
+
+    function renderChart(points) {
+      const c = $('chart');
+      const ctx = c.getContext('2d');
+      const w = c.width;
+      const h = c.height;
+      const padL = 42;
+      const padR = 12;
+      const padT = 12;
+      const padB = 24;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.strokeStyle = '#d2d9e3';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+
+      const gx = padL;
+      const gy = padT;
+      const gw = w - padL - padR;
+      const gh = h - padT - padB;
+
+      ctx.strokeStyle = '#c8d0dd';
+      for (let i = 0; i <= 4; i++) {
+        const y = gy + (gh * i / 4);
+        ctx.beginPath();
+        ctx.moveTo(gx, y);
+        ctx.lineTo(gx + gw, y);
+        ctx.stroke();
+      }
+
+      if (!points || points.length === 0) {
+        ctx.fillStyle = '#8b96a8';
+        ctx.font = '14px monospace';
+        ctx.fillText('No data in selected range.', gx + 8, gy + gh / 2);
+        return;
+      }
+
+      let minV = Number.POSITIVE_INFINITY;
+      let maxV = Number.NEGATIVE_INFINITY;
+      for (const p of points) {
+        const v = Number(p.v);
+        if (Number.isFinite(v)) {
+          if (v < minV) minV = v;
+          if (v > maxV) maxV = v;
+        }
+      }
+
+      if (!Number.isFinite(minV) || !Number.isFinite(maxV)) {
+        minV = 0;
+        maxV = 1;
+      }
+      if (maxV <= minV) {
+        maxV = minV + 1;
+      }
+
+      ctx.fillStyle = '#4f5c70';
+      ctx.font = '11px monospace';
+      ctx.fillText(maxV.toFixed(2), 4, gy + 8);
+      ctx.fillText(minV.toFixed(2), 4, gy + gh);
+
+      ctx.strokeStyle = '#0d7a8a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        const v = Number(p.v);
+        const nx = (points.length <= 1) ? 0 : (i / (points.length - 1));
+        const ny = (v - minV) / (maxV - minV);
+        const x = gx + nx * gw;
+        const y = gy + (1 - ny) * gh;
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = '#4f5c70';
+      ctx.fillText(points[0].ts || '-', gx, h - 8);
+      const endTs = points[points.length - 1].ts || '-';
+      const txtWidth = ctx.measureText(endTs).width;
+      ctx.fillText(endTs, gx + gw - txtWidth, h - 8);
+    }
+
+    function buildHistoryQuery() {
+      const metric = $('metric').value;
+      const range = $('range').value;
+      let start = '';
+      let end = '';
+      const now = new Date();
+
+      if (range === 'custom') {
+        const s = $('start').value;
+        const e = $('end').value;
+        if (s) start = s.replace('T', ' ') + ':00';
+        if (e) end = e.replace('T', ' ') + ':00';
+      } else {
+        const mins = {
+          '15m': 15,
+          '1h': 60,
+          '6h': 360,
+          '24h': 1440
+        }[range] || 60;
+        const startDate = new Date(now.getTime() - mins * 60000);
+        start = fmtLocalTs(startDate);
+        end = fmtLocalTs(now);
+      }
+
+      const maxPoints = Math.max(20, Math.min(1000, Number($('maxPoints').value || 300)));
+      const q = new URLSearchParams();
+      q.set('metric', metric);
+      q.set('max_points', String(maxPoints));
+      if (start) q.set('start', start);
+      if (end) q.set('end', end);
+      return q.toString();
+    }
+
+    async function loadHistory() {
+      try {
+        setText('historyMeta', 'Loading history...');
+        const q = buildHistoryQuery();
+        const data = await fetchJson('/api/history?' + q);
+        const points = Array.isArray(data.points) ? data.points : [];
+        renderChart(points);
+        setText('historyMeta',
+          'metric=' + (data.metric || '?') +
+          ' matched=' + (data.matched ?? 0) +
+          ' plotted=' + points.length);
+      } catch (err) {
+        renderChart([]);
+        setText('historyMeta', 'History error: ' + err.message);
+      }
+    }
+
+    async function loadLogs() {
+      try {
+        const data = await fetchJson('/api/logs');
+        const files = Array.isArray(data.files) ? data.files : [];
+        if (files.length === 0) {
+          setHtml('logs', '<div>No log files.</div>');
+          return;
+        }
+
+        let html = '<ul>';
+        for (const f of files) {
+          const n = f.name || '?';
+          const s = Number(f.size || 0);
+          const p = '/api/logs/download?file=' + encodeURIComponent('/logs/' + n);
+          html += '<li><a href="' + p + '">' + n + '</a> (' + s + ' bytes)</li>';
+        }
+        html += '</ul>';
+        setHtml('logs', html);
+      } catch (err) {
+        setHtml('logs', '<div class="bad">' + err.message + '</div>');
+      }
+    }
+
+    async function loadEvents() {
+      try {
+        const data = await fetchJson('/api/events?limit=20');
+        setText('events', JSON.stringify(data, null, 2));
+      } catch (err) {
+        setText('events', 'Error: ' + err.message);
+      }
+    }
+
+    async function loadSnapshot() {
+      try {
+        const [live, health] = await Promise.all([
+          fetchJson('/api/live'),
+          fetchJson('/api/health')
+        ]);
+
+        setHtml('liveKv', kvHtml(live, [
+          'timestamp',
+          'timestamp_quality',
+          'temp_c',
+          'humidity_pct',
+          'pressure_hpa',
+          'uptime_s'
+        ]));
+
+        setHtml('healthKv', kvHtml(health, [
+          'uptime_s',
+          'free_heap_bytes',
+          'largest_free_block_bytes',
+          'log_queue_depth',
+          'log_queue_capacity',
+          'dropped_log_samples',
+          'wifi_connected',
+          'sd_healthy',
+          'ntp_synced'
+        ]));
+
+        updatePills(live, health);
+      } catch (err) {
+        setText('pillRef', 'Updated: error');
+      }
+    }
+
+    async function loadStaticPanels() {
+      try {
+        const cfg = await fetchJson('/api/config');
+        setText('cfg', JSON.stringify(cfg, null, 2));
+      } catch (err) {
+        setText('cfg', 'Error: ' + err.message);
+      }
+
+      try {
+        const tree = await fetchText('/api/sd-tree');
+        setText('sdtree', tree);
+      } catch (err) {
+        setText('sdtree', 'Error: ' + err.message);
+      }
+    }
+
+    function onRangeChanged() {
+      const custom = $('range').value === 'custom';
+      $('start').disabled = !custom;
+      $('end').disabled = !custom;
+    }
+
+    $('btnLoad').addEventListener('click', loadHistory);
+    $('range').addEventListener('change', () => {
+      onRangeChanged();
+      loadHistory();
+    });
+    $('metric').addEventListener('change', loadHistory);
+
+    (async function boot() {
+      onRangeChanged();
+      await loadStaticPanels();
+      await loadSnapshot();
+      await loadLogs();
+      await loadEvents();
+      await loadHistory();
+
+      setInterval(loadSnapshot, 1000);
+      setInterval(loadEvents, 5000);
+      setInterval(loadLogs, 15000);
+      setInterval(loadStaticPanels, 15000);
+    })();
+  </script>
+</body>
+</html>
+)HTML";
+
+  server_.send_P(200, "text/html", html);
 }
 
 void WebManager::handleLiveJson() {
