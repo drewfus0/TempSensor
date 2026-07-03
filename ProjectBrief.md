@@ -109,3 +109,113 @@ All planned features run together with stable memory behavior on ESP8266.
 3. NTP outage and recovery detail.
 4. Local dashboard authentication.
 5. Historical graph depth defaults and decimation strategy.
+
+## 8) Milestone 2 Web Design And Structure
+
+### 8.1 Design Objectives
+- Keep the UI fast and readable on desktop and mobile browsers.
+- Keep firmware memory usage bounded on ESP8266.
+- Avoid loading full CSV files into RAM.
+- Provide practical local-network tooling first (read, filter, download, tune).
+
+### 8.2 Information Architecture (Pages And Panels)
+- Route: `/`
+- Panel: Live Snapshot
+- Panel: Health Snapshot
+- Panel: Historical Chart
+- Panel: Date-Time Filter
+- Panel: Runtime Controls
+- Panel: SD Files And Tree
+- Panel: Event Timeline
+
+### 8.3 Single-Page Layout Structure
+- Header row: device name, Wi-Fi state, NTP state, current IP, last refresh time.
+- Left column: Live Snapshot, Health Snapshot, Runtime Controls.
+- Right column: Historical Chart with metric selector and range filter.
+- Bottom row: SD file tree, downloadable log list, event timeline.
+- Mobile behavior: stack all panels vertically in the same logical order.
+
+### 8.4 Functional Scope Per Panel
+- Live Snapshot
+- Show temperature, humidity, pressure, timestamp, timestamp quality.
+- Refresh interval target: 1 second.
+
+- Health Snapshot
+- Show heap free, largest free block, queue depth/capacity, dropped samples, SD health.
+- Refresh interval target: 3 to 5 seconds.
+
+- Historical Chart
+- Plot one metric at a time: `temp_c`, `humidity_pct`, `pressure_hpa`.
+- Allow selecting multiple preset windows: 15 min, 1 hr, 6 hr, 24 hr, custom.
+- Render downsampled points returned by firmware (not raw full-resolution for long windows).
+
+- Date-Time Filter
+- Inputs: start local datetime, end local datetime.
+- Validation: end must be greater than start, and range capped by configured max.
+
+- Runtime Controls
+- Editable settings: sample interval, SD flush interval, display refresh interval.
+- Optional controls: force flush now, reconnect Wi-Fi, retry NTP sync.
+- Apply flow: preview values, apply, show success or rollback message.
+
+- SD Files And Tree
+- Show recursive tree and file sizes.
+- Allow selecting known log files for download.
+
+- Event Timeline
+- Show parsed entries from events CSV in reverse chronological order.
+- Include NTP re-established and any future warning events.
+
+### 8.5 HTTP API Contract (Milestone 2)
+- Keep existing
+- `GET /api/live`
+- `GET /api/health`
+- `GET /api/sd-tree`
+
+- Add
+- `GET /api/config`
+- `POST /api/config`
+- `GET /api/history?metric=temp_c&start=...&end=...&max_points=300`
+- `GET /api/events?start=...&end=...&limit=200`
+- `GET /api/logs`
+- `GET /api/logs/download?file=/logs/data.csv`
+- `POST /api/action/flush-now`
+- `POST /api/action/ntp-retry`
+
+### 8.6 Data And Processing Rules
+- History queries must stream-read CSV line by line.
+- Never hold full file contents in RAM.
+- Response point cap defaults to 300 per request.
+- If requested range exceeds cap, perform decimation during stream parse.
+- Reject invalid requests with clear `400` JSON error payload.
+- Return `503` when SD is unavailable.
+
+### 8.7 Frontend Rendering Rules
+- No heavy frontend frameworks for milestone 2.
+- Use plain HTML/CSS/JS and lightweight canvas-based chart rendering.
+- Polling
+- Live: 1 second.
+- Health: 5 seconds.
+- History: on-demand and when filter changes.
+- Show loading and error states per panel, not full-page blocking errors.
+
+### 8.8 Runtime Configuration Model
+- Configuration source of truth remains firmware.
+- Runtime changes apply immediately and also persist to a small settings file on SD.
+- On boot, load settings from SD with fallback to compile-time defaults.
+- If settings file is invalid, log event and continue with defaults.
+
+### 8.9 Milestone 2 Acceptance Test Matrix
+- Live panel updates continuously while sampling remains active.
+- History endpoint returns filtered data for all three metrics.
+- Chart renders 24-hour range without browser freeze.
+- Runtime control updates sample interval and takes effect without reboot.
+- Log list and downloads work for at least data and event CSV files.
+- SD unavailable state is surfaced clearly in UI and API responses.
+- Device remains stable during 12-hour run with periodic web queries.
+
+### 8.10 Delivery Phases
+- Phase 1: API foundation for config, history, events, logs.
+- Phase 2: Frontend layout and live/health/history views.
+- Phase 3: Runtime controls and settings persistence.
+- Phase 4: Robustness pass (errors, limits, soak test, memory profiling).
