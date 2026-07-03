@@ -8,6 +8,129 @@
 #include "managers/LoggerManager.h"
 #include "managers/TimeManager.h"
 
+namespace {
+class FastLineReader {
+ public:
+  explicit FastLineReader(File& f) : file_(f), bufferLength_(0), bufferIndex_(0), eof_(false) {}
+
+  bool readLine(char* lineBuf, size_t maxLen) {
+    size_t lineIndex = 0;
+    while (true) {
+      if (bufferIndex_ >= bufferLength_) {
+        if (eof_) {
+          if (lineIndex == 0) return false;
+          lineBuf[lineIndex] = '\0';
+          return true;
+        }
+        int bytesRead = file_.read(reinterpret_cast<uint8_t*>(chunk_), sizeof(chunk_));
+        if (bytesRead <= 0) {
+          eof_ = true;
+          if (lineIndex == 0) return false;
+          lineBuf[lineIndex] = '\0';
+          return true;
+        }
+        bufferLength_ = bytesRead;
+        bufferIndex_ = 0;
+      }
+
+      char c = chunk_[bufferIndex_++];
+      if (c == '\n') {
+        lineBuf[lineIndex] = '\0';
+        return true;
+      }
+      if (c != '\r') {
+        if (lineIndex < maxLen - 1) {
+          lineBuf[lineIndex++] = c;
+        }
+      }
+    }
+  }
+
+ private:
+  File& file_;
+  char chunk_[512];
+  size_t bufferLength_;
+  size_t bufferIndex_;
+  bool eof_;
+};
+
+bool isValidDateTime(const char* ts) {
+  if (strlen(ts) < 19) return false;
+  for (int i = 0; i < 19; ++i) {
+    if (i == 4 || i == 7) {
+      if (ts[i] != '-') return false;
+    } else if (i == 10) {
+      if (ts[i] != ' ') return false;
+    } else if (i == 13 || i == 16) {
+      if (ts[i] != ':') return false;
+    } else {
+      if (ts[i] < '0' || ts[i] > '9') return false;
+    }
+  }
+  return true;
+}
+
+uint32_t findStartOffset(File& file, const String& startTs) {
+  if (startTs.length() == 0) {
+    return 0;
+  }
+
+  uint32_t low = 0;
+  uint32_t high = file.size();
+  char lineBuf[128];
+
+  while (high - low > 512) {
+    uint32_t mid = low + (high - low) / 2;
+    file.seek(mid);
+    
+    if (mid > 0) {
+      while (file.available() && file.read() != '\n') {
+        // skip
+      }
+    }
+
+    uint32_t currentPos = file.position();
+    if (currentPos >= high) {
+      high = mid;
+      continue;
+    }
+
+    FastLineReader reader(file);
+    if (!reader.readLine(lineBuf, sizeof(lineBuf))) {
+      high = mid;
+      continue;
+    }
+
+    if (lineBuf[0] == '\0' || strncmp(lineBuf, "timestamp,", 10) == 0) {
+      low = file.position();
+      continue;
+    }
+
+    if (strlen(lineBuf) < 19) {
+      low = file.position();
+      continue;
+    }
+
+    char ts[20];
+    strncpy(ts, lineBuf, 19);
+    ts[19] = '\0';
+
+    if (!isValidDateTime(ts)) {
+      low = file.position();
+      continue;
+    }
+
+    if (strcmp(ts, startTs.c_str()) < 0) {
+      low = currentPos;
+    } else {
+      high = currentPos;
+    }
+  }
+
+  return low;
+}
+}  // namespace
+
 bool WebManager::begin(const char* ssid, const char* password, const char* hostname, LoggerManager* logger, TimeManager* time) {
   loggerManager_ = logger;
   timeManager_ = time;
@@ -690,7 +813,7 @@ void WebManager::handleRoot() {
           </div>
 
           <div style='display: flex; justify-content: flex-end; margin-bottom: 8px;'>
-            <button id='btnLoad' style='width: auto; padding: 10px 20px;'>Refresh History</button>
+            <button id='btnLoad' style='width: auto; padding: 10px 20px;'>Load Graph Data</button>
           </div>
           
           <div class='alert-banner' id='historyAlert' style='margin-bottom: 10px;'></div>
@@ -744,6 +867,8 @@ void WebManager::handleRoot() {
     let minVal = 0;
     let maxVal = 1;
     let hoveredPoint = null;
+    let lastLive = null;
+    let lastHealth = null;
 
     async function fetchJson(url) {
       const res = await fetch(url, { cache: 'no-store' });
@@ -770,18 +895,18 @@ void WebManager::handleRoot() {
     }
 
     function updatePills(live, health) {
-      const wifi = health.wifi_connected ? 'UP' : 'DOWN';
-      const sd = health.sd_healthy ? 'OK' : 'BAD';
-      const ntp = health.ntp_synced ? 'SYNC' : 'EST';
+      const wifi = (health && health.wifi_connected) ? 'UP' : 'DOWN';
+      const sd = (health && health.sd_healthy) ? 'OK' : 'BAD';
+      const ntp = (health && health.ntp_synced) ? 'SYNC' : 'EST';
 
       $('pillWifi').textContent = wifi;
-      $('pillWifi').style.color = health.wifi_connected ? 'var(--success)' : 'var(--error)';
+      $('pillWifi').style.color = (health && health.wifi_connected) ? 'var(--success)' : 'var(--error)';
       
       $('pillSd').textContent = sd;
-      $('pillSd').style.color = health.sd_healthy ? 'var(--success)' : 'var(--error)';
+      $('pillSd').style.color = (health && health.sd_healthy) ? 'var(--success)' : 'var(--error)';
       
       $('pillNtp').textContent = ntp;
-      $('pillNtp').style.color = health.ntp_synced ? 'var(--success)' : 'var(--warning)';
+      $('pillNtp').style.color = (health && health.ntp_synced) ? 'var(--success)' : 'var(--warning)';
 
       let ip = '-';
       if (live && live.has_sample && typeof live.ip === 'string') {
@@ -1209,14 +1334,10 @@ void WebManager::handleRoot() {
       }
     }
 
-    async function loadSnapshot() {
+    async function loadLive() {
       if (isLoadingHistory) return;
       try {
-        const [live, health] = await Promise.all([
-          fetchJson('/api/live'),
-          fetchJson('/api/health')
-        ]);
-
+        const live = await fetchJson('/api/live');
         if (live && live.has_sample) {
           $('valTemp').textContent = parseFloat(live.temp_c).toFixed(1) + ' °C';
           $('valHum').textContent = parseFloat(live.humidity_pct).toFixed(1) + ' %';
@@ -1225,7 +1346,17 @@ void WebManager::handleRoot() {
           $('liveQuality').textContent = live.timestamp_quality;
           $('liveQuality').style.color = live.timestamp_quality === 'ntp' ? 'var(--success)' : 'var(--warning)';
         }
+        lastLive = live;
+        updatePills(lastLive, lastHealth);
+      } catch (err) {
+        console.error("Live fetch error", err);
+      }
+    }
 
+    async function loadHealth() {
+      if (isLoadingHistory) return;
+      try {
+        const health = await fetchJson('/api/health');
         if (health && health.has_health) {
           const up = health.uptime_s;
           const hrs = Math.floor(up / 3600);
@@ -1248,10 +1379,10 @@ void WebManager::handleRoot() {
             $('healthDropped').style.color = 'var(--error)';
           }
         }
-
-        updatePills(live, health);
+        lastHealth = health;
+        updatePills(lastLive, lastHealth);
       } catch (err) {
-        console.error("Poller error", err);
+        console.error("Health fetch error", err);
       }
     }
 
@@ -1367,25 +1498,38 @@ void WebManager::handleRoot() {
     $('btnNtp').addEventListener('click', () => triggerAction('/api/action/ntp-retry', 'btnNtp'));
 
     $('btnLoad').addEventListener('click', loadHistory);
-    $('range').addEventListener('change', () => {
-      onRangeChanged();
-      loadHistory();
-    });
-    $('metric').addEventListener('change', loadHistory);
+    $('range').addEventListener('change', onRangeChanged);
 
     (async function boot() {
       onRangeChanged();
       await loadConfig();
       await loadStaticPanels();
-      await loadSnapshot();
+      await loadLive();
+      await loadHealth();
       await loadLogs();
       await loadEvents();
       renderChart();
 
-      setInterval(loadSnapshot, 1000);
-      setInterval(loadEvents, 5000);
-      setInterval(loadLogs, 15000);
-      setInterval(loadStaticPanels, 15000);
+      // Staggered polling intervals to spread the load on ESP8266
+      setTimeout(() => {
+        setInterval(loadLive, 30000);
+      }, 30000); // Live: Slot 0 (starts at 30s)
+
+      setTimeout(() => {
+        setInterval(loadHealth, 60000);
+      }, 10000); // Health: Slot 10 (starts at 70s)
+
+      setTimeout(() => {
+        setInterval(loadEvents, 60000);
+      }, 20000); // Events: Slot 20 (starts at 80s)
+
+      setTimeout(() => {
+        setInterval(loadLogs, 60000);
+      }, 40000); // Logs: Slot 40 (starts at 100s)
+
+      setTimeout(() => {
+        setInterval(loadStaticPanels, 60000);
+      }, 50000); // Static panels: Slot 50 (starts at 110s)
     })();
   </script>
 </body>
@@ -1595,20 +1739,44 @@ void WebManager::streamHistoryJson(File& file,
                                    uint32_t offset,
                                    uint32_t limit) {
   uint32_t matched = 0;
+  char lineBuf[128];
 
-  file.seek(0);
-  while (file.available()) {
-    const String line = file.readStringUntil('\n');
-    String ts;
-    String quality;
-    float value = 0.0f;
-    if (!parseHistoryValue(line, metric, ts, quality, value)) {
-      continue;
+  uint32_t startOffset = findStartOffset(file, startTs);
+
+  // Pass 1: Count matched points
+  {
+    file.seek(startOffset);
+    if (startOffset > 0) {
+      while (file.available() && file.read() != '\n') {
+        // skip
+      }
     }
-    if (!isTimestampInRange(ts, startTs, endTs)) {
-      continue;
+    FastLineReader reader(file);
+    while (reader.readLine(lineBuf, sizeof(lineBuf))) {
+      if (lineBuf[0] == '\0' || strncmp(lineBuf, "timestamp,", 10) == 0) {
+        continue;
+      }
+      
+      if (strlen(lineBuf) < 19) {
+        continue;
+      }
+      char ts[20];
+      strncpy(ts, lineBuf, 19);
+      ts[19] = '\0';
+
+      if (!isValidDateTime(ts)) {
+        continue;
+      }
+
+      if (startTs.length() > 0 && strcmp(ts, startTs.c_str()) < 0) {
+        continue;
+      }
+      if (endTs.length() > 0 && strcmp(ts, endTs.c_str()) > 0) {
+        break;
+      }
+
+      ++matched;
     }
-    ++matched;
   }
 
   const uint32_t stride = (matched > maxPoints) ? ((matched + maxPoints - 1) / maxPoints) : 1;
@@ -1628,38 +1796,78 @@ void WebManager::streamHistoryJson(File& file,
   uint32_t matchedIndex = 0;
   uint32_t dsIndex = 0;
   uint32_t emitted = 0;
-  file.seek(0);
-  while (file.available()) {
-    const String line = file.readStringUntil('\n');
-    String ts;
-    String quality;
-    float value = 0.0f;
-    if (!parseHistoryValue(line, metric, ts, quality, value)) {
-      continue;
-    }
-    if (!isTimestampInRange(ts, startTs, endTs)) {
-      continue;
-    }
 
-    if ((matchedIndex % stride) != 0) {
-      ++matchedIndex;
-      continue;
+  // Pass 2: Emit matched points
+  {
+    file.seek(startOffset);
+    if (startOffset > 0) {
+      while (file.available() && file.read() != '\n') {
+        // skip
+      }
     }
-    ++matchedIndex;
-
-    if (dsIndex >= offset) {
-      if (emitted > 0) {
-        server_.sendContent(",");
+    FastLineReader reader(file);
+    while (reader.readLine(lineBuf, sizeof(lineBuf))) {
+      if (lineBuf[0] == '\0' || strncmp(lineBuf, "timestamp,", 10) == 0) {
+        continue;
       }
 
-      String item = "{\"ts\":\"" + ts + "\",\"q\":\"" + quality + "\",\"v\":" + String(value, 2) + "}";
-      server_.sendContent(item);
-      ++emitted;
-      if (emitted >= limit) {
+      if (strlen(lineBuf) < 19) {
+        continue;
+      }
+      char ts[20];
+      strncpy(ts, lineBuf, 19);
+      ts[19] = '\0';
+
+      if (!isValidDateTime(ts)) {
+        continue;
+      }
+
+      if (startTs.length() > 0 && strcmp(ts, startTs.c_str()) < 0) {
+        continue;
+      }
+      if (endTs.length() > 0 && strcmp(ts, endTs.c_str()) > 0) {
         break;
       }
+
+      if ((matchedIndex % stride) != 0) {
+        ++matchedIndex;
+        continue;
+      }
+      ++matchedIndex;
+
+      if (dsIndex >= offset) {
+        char* saveptr = nullptr;
+        char* c0 = strtok_r(lineBuf, ",", &saveptr);
+        char* c1 = strtok_r(nullptr, ",", &saveptr);
+        char* c2 = strtok_r(nullptr, ",", &saveptr);
+        char* c3 = strtok_r(nullptr, ",", &saveptr);
+        char* c4 = strtok_r(nullptr, ",", &saveptr);
+
+        if (c0 && c1 && c2 && c3 && c4) {
+          const char* valStr = nullptr;
+          if (metric == "temp_c") {
+            valStr = c2;
+          } else if (metric == "humidity_pct") {
+            valStr = c3;
+          } else if (metric == "pressure_hpa") {
+            valStr = c4;
+          }
+
+          if (valStr) {
+            if (emitted > 0) {
+              server_.sendContent(",");
+            }
+            String item = "{\"ts\":\"" + String(c0) + "\",\"q\":\"" + String(c1) + "\",\"v\":" + String(atof(valStr), 2) + "}";
+            server_.sendContent(item);
+            ++emitted;
+            if (emitted >= limit) {
+              break;
+            }
+          }
+        }
+      }
+      ++dsIndex;
     }
-    ++dsIndex;
   }
 
   server_.sendContent("]}");
