@@ -5,8 +5,13 @@
 #include <stdlib.h>
 
 #include "config/AppConfig.h"
+#include "managers/LoggerManager.h"
+#include "managers/TimeManager.h"
 
-bool WebManager::begin(const char* ssid, const char* password, const char* hostname) {
+bool WebManager::begin(const char* ssid, const char* password, const char* hostname, LoggerManager* logger, TimeManager* time) {
+  loggerManager_ = logger;
+  timeManager_ = time;
+
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(hostname);
   WiFi.begin(ssid, password);
@@ -46,6 +51,8 @@ void WebManager::registerRoutes() {
   server_.on("/api/logs", HTTP_GET, [this]() { handleLogsJson(); });
   server_.on("/api/logs/download", HTTP_GET, [this]() { handleLogDownload(); });
   server_.on("/api/sd-tree", [this]() { handleSdTreeText(); });
+  server_.on("/api/action/flush-now", HTTP_POST, [this]() { handleFlushNow(); });
+  server_.on("/api/action/ntp-retry", HTTP_POST, [this]() { handleNtpRetry(); });
 }
 
 void WebManager::handleRoot() {
@@ -56,239 +63,614 @@ void WebManager::handleRoot() {
   <meta charset='utf-8'>
   <meta name='viewport' content='width=device-width,initial-scale=1'>
   <title>TempSensor Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #f2f4f7;
-      --ink: #1e2530;
-      --sub: #4a5668;
-      --card: #ffffff;
-      --line: #d2d9e3;
-      --accent: #0d7a8a;
-      --ok: #207542;
-      --bad: #8f1f28;
-      --warn: #9f6a00;
+      --bg: #090d16;
+      --card-bg: rgba(21, 27, 43, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --text: #f3f4f6;
+      --text-sub: #9ca3af;
+      --accent: #06b6d4;
+      --accent-hover: #0891b2;
+      --success: #10b981;
+      --error: #ef4444;
+      --warning: #f59e0b;
+      --font-main: 'Outfit', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 16px;
-      font-family: "Consolas", "Liberation Mono", "DejaVu Sans Mono", monospace;
-      background: linear-gradient(180deg, #eef2f8 0%, var(--bg) 100%);
-      color: var(--ink);
+      padding: 20px;
+      font-family: var(--font-main);
+      background: linear-gradient(135deg, #070a13 0%, #0f172a 100%);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
     }
-    .wrap { max-width: 1200px; margin: 0 auto; }
+    .wrap { max-width: 1280px; margin: 0 auto; }
+    
     .head {
       display: flex;
-      gap: 12px;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 12px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--card-border);
       flex-wrap: wrap;
+      gap: 16px;
+    }
+    .title-area {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .heartbeat {
+      width: 10px;
+      height: 10px;
+      background-color: var(--success);
+      border-radius: 50%;
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+      }
+      70% {
+        transform: scale(1);
+        box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+      }
+      100% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+      }
     }
     h1 {
       margin: 0;
-      font-size: 1.2rem;
-      letter-spacing: 0.02em;
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(to right, #ffffff, #9ca3af);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
     .pills { display: flex; gap: 8px; flex-wrap: wrap; }
     .pill {
-      border: 1px solid var(--line);
-      background: #fff;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
       border-radius: 999px;
-      padding: 4px 10px;
+      padding: 6px 14px;
       font-size: 0.8rem;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-    .grid {
+    
+    .grid-main {
       display: grid;
-      grid-template-columns: 1fr 1.2fr;
-      gap: 12px;
+      grid-template-columns: 1fr 1.6fr;
+      gap: 20px;
+      margin-bottom: 20px;
     }
-    .col { display: grid; gap: 12px; }
+    .grid-bottom {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1.2fr;
+      gap: 20px;
+    }
+    
     .card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 12px;
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
     .card h2 {
-      margin: 0 0 8px 0;
+      margin: 0 0 16px 0;
       font-size: 0.95rem;
-      color: var(--sub);
+      font-weight: 600;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-left: 3px solid var(--accent);
+      padding-left: 8px;
     }
-    .kv {
+    
+    .readings {
       display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 4px 8px;
-      font-size: 0.88rem;
+      gap: 12px;
     }
-    .k { color: var(--sub); }
-    .v { font-weight: 600; }
-    .ok { color: var(--ok); }
-    .bad { color: var(--bad); }
-    .warn { color: var(--warn); }
-    .controls {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-    label {
-      display: grid;
-      gap: 4px;
-      font-size: 0.8rem;
-      color: var(--sub);
-    }
-    input, select, button {
-      width: 100%;
-      border: 1px solid var(--line);
+    .reading-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.015);
       border-radius: 8px;
-      padding: 6px 8px;
-      font: inherit;
-      background: #fff;
-      color: var(--ink);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+    }
+    .reading-label {
+      font-size: 0.85rem;
+      color: var(--text-sub);
+    }
+    .reading-val {
+      font-family: var(--font-mono);
+      font-size: 1.3rem;
+      font-weight: 600;
+      color: #fff;
+    }
+    .reading-val.temp { color: #f43f5e; text-shadow: 0 0 10px rgba(244, 63, 94, 0.25); }
+    .reading-val.hum { color: #06b6d4; text-shadow: 0 0 10px rgba(6, 182, 212, 0.25); }
+    .reading-val.pres { color: #10b981; text-shadow: 0 0 10px rgba(16, 185, 129, 0.25); }
+    
+    .live-meta {
+      margin-top: 12px;
+      font-size: 0.75rem;
+      color: var(--text-sub);
+      text-align: right;
+    }
+    
+    .health-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .health-item {
+      background: rgba(255, 255, 255, 0.01);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      padding: 10px;
+      border-radius: 8px;
+    }
+    .health-item.full-width {
+      grid-column: span 2;
+    }
+    .health-lbl { font-size: 0.72rem; color: var(--text-sub); margin-bottom: 4px; }
+    .health-val { font-family: var(--font-mono); font-size: 0.9rem; font-weight: 600; }
+    
+    .progress-bar-container {
+      width: 100%;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 2px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-group.full-width {
+      grid-column: span 2;
+    }
+    input, select {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-family: var(--font-main);
+      color: #fff;
+      font-size: 0.85rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.15);
+    }
+    input:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
     }
     button {
+      width: 100%;
       background: var(--accent);
       color: #fff;
-      border-color: var(--accent);
+      border: none;
+      border-radius: 6px;
+      padding: 10px;
+      font-family: var(--font-main);
+      font-weight: 600;
+      font-size: 0.85rem;
       cursor: pointer;
-      font-weight: 700;
+      transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
+    }
+    button:hover {
+      background: var(--accent-hover);
+      box-shadow: 0 0 10px rgba(6, 182, 212, 0.3);
+    }
+    button:active {
+      transform: scale(0.98);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    button.btn-secondary {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+    }
+    button.btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: none;
+    }
+    
+    .alert-banner {
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      margin-top: 10px;
+      display: none;
+      line-height: 1.3;
+    }
+    .alert-banner.success {
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      color: var(--success);
+    }
+    .alert-banner.warning {
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.25);
+      color: var(--warning);
+    }
+    .alert-banner.error {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      color: var(--error);
+    }
+    
+    .chart-container {
+      position: relative;
+      width: 100%;
+      height: 250px;
+      margin-top: 12px;
     }
     canvas {
       width: 100%;
-      height: 240px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
+      height: 100%;
+      display: block;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.2);
     }
-    .meta { margin-top: 8px; font-size: 0.78rem; color: var(--sub); }
-    pre {
+    .chart-tooltip {
+      position: absolute;
+      background: rgba(9, 13, 22, 0.95);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: var(--font-main);
+      font-size: 0.75rem;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      z-index: 10;
+    }
+    .tooltip-date { font-weight: 600; color: #fff; margin-bottom: 2px; }
+    .tooltip-val { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+    .tooltip-q { font-size: 0.65rem; color: var(--text-sub); margin-top: 2px; }
+    
+    .scroll-area {
       margin: 0;
-      white-space: pre-wrap;
-      overflow: auto;
-      max-height: 220px;
-      font-size: 0.8rem;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      height: 220px;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      line-height: 1.4;
     }
-    .logs a {
+    #sdtree {
+      white-space: pre;
+      color: #a5f3fc;
+    }
+    .logs-list {
+      list-style-type: none;
+      padding: 0;
+      margin: 0;
+    }
+    .logs-list li {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    }
+    .logs-list a {
       color: var(--accent);
       text-decoration: none;
-      font-weight: 700;
+      font-weight: 600;
     }
-    .logs a:hover { text-decoration: underline; }
-    @media (max-width: 900px) {
-      .grid { grid-template-columns: 1fr; }
-      .controls { grid-template-columns: 1fr; }
+    .logs-list a:hover {
+      text-decoration: underline;
+    }
+    
+    .timeline-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .timeline-item {
+      display: flex;
+      gap: 10px;
+      border-left: 2px solid rgba(255, 255, 255, 0.05);
+      padding-left: 10px;
+      position: relative;
+    }
+    .timeline-item::before {
+      content: '';
+      position: absolute;
+      left: -5px;
+      top: 4px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-sub);
+    }
+    .timeline-item.ntp_reestablished::before {
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+    }
+    .timeline-item.warning::before {
+      background: var(--warning);
+    }
+    .timeline-item.error::before {
+      background: var(--error);
+    }
+    
+    .timeline-time {
+      font-size: 0.68rem;
+      color: var(--text-sub);
+      min-width: 55px;
+    }
+    .timeline-content {
+      font-size: 0.75rem;
+    }
+    
+    @media (max-width: 1024px) {
+      .grid-main, .grid-bottom {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body>
   <div class='wrap'>
     <div class='head'>
-      <h1>TempSensor Local Dashboard</h1>
+      <div class='title-area'>
+        <div class='heartbeat' id='heartbeat'></div>
+        <h1>TEMPSENSOR LOCAL</h1>
+      </div>
       <div class='pills'>
-        <span class='pill' id='pillWifi'>WiFi: ?</span>
-        <span class='pill' id='pillSd'>SD: ?</span>
-        <span class='pill' id='pillNtp'>NTP: ?</span>
-        <span class='pill' id='pillIp'>IP: ?</span>
-        <span class='pill' id='pillRef'>Updated: -</span>
+        <div class='pill'><span style='color: var(--text-sub)'>WiFi:</span> <span id='pillWifi'>-</span></div>
+        <div class='pill'><span style='color: var(--text-sub)'>SD:</span> <span id='pillSd'>-</span></div>
+        <div class='pill'><span style='color: var(--text-sub)'>NTP:</span> <span id='pillNtp'>-</span></div>
+        <div class='pill'><span style='color: var(--text-sub)'>IP:</span> <span id='pillIp'>-</span></div>
+        <div class='pill'><span style='color: var(--text-sub)'>Updated:</span> <span id='pillRef'>-</span></div>
       </div>
     </div>
 
-    <div class='grid'>
-      <div class='col'>
+    <div class='grid-main'>
+      <div style='display: flex; flex-direction: column; gap: 20px;'>
         <section class='card'>
           <h2>Live Snapshot</h2>
-          <div class='kv' id='liveKv'></div>
+          <div class='readings'>
+            <div class='reading-row'>
+              <div class='reading-label'>Temperature</div>
+              <div class='reading-val temp' id='valTemp'>--.- °C</div>
+            </div>
+            <div class='reading-row'>
+              <div class='reading-label'>Humidity</div>
+              <div class='reading-val hum' id='valHum'>--.- %</div>
+            </div>
+            <div class='reading-row'>
+              <div class='reading-label'>Pressure</div>
+              <div class='reading-val pres' id='valPres'>----.- hPa</div>
+            </div>
+          </div>
+          <div class='live-meta'>
+            <span id='liveTime'>Timestamp: --:--:--</span> Quality: <span id='liveQuality' style='font-weight:600;'>-</span>
+          </div>
         </section>
+
         <section class='card'>
           <h2>Health Snapshot</h2>
-          <div class='kv' id='healthKv'></div>
+          <div class='health-grid'>
+            <div class='health-item full-width'>
+              <div class='health-lbl'>Uptime</div>
+              <div class='health-val' id='healthUptime'>-</div>
+            </div>
+            <div class='health-item'>
+              <div class='health-lbl'>Free Heap</div>
+              <div class='health-val' id='healthHeap'>-</div>
+              <div class='progress-bar-container'>
+                <div class='progress-bar' id='barHeap'></div>
+              </div>
+            </div>
+            <div class='health-item'>
+              <div class='health-lbl'>Max Block</div>
+              <div class='health-val' id='healthBlock'>-</div>
+            </div>
+            <div class='health-item'>
+              <div class='health-lbl'>Queue Depth</div>
+              <div class='health-val' id='healthQueue'>-</div>
+              <div class='progress-bar-container'>
+                <div class='progress-bar' id='barQueue' style='background: var(--warning);'></div>
+              </div>
+            </div>
+            <div class='health-item'>
+              <div class='health-lbl'>Dropped Samples</div>
+              <div class='health-val' id='healthDropped'>-</div>
+            </div>
+          </div>
         </section>
+
         <section class='card'>
-          <h2>Config (Phase 1 API)</h2>
-          <pre id='cfg'>loading...</pre>
+          <h2>Runtime Controls</h2>
+          <form id='cfgForm'>
+            <div class='controls-grid'>
+              <div class='form-group'>
+                <label for='cfgSample'>Sample Interval (ms)</label>
+                <input id='cfgSample' type='number' min='500' max='300000' value='1000' required>
+              </div>
+              <div class='form-group'>
+                <label for='cfgFlush'>SD Flush Interval (ms)</label>
+                <input id='cfgFlush' type='number' min='5000' max='3600000' value='60000' required>
+              </div>
+              <div class='form-group full-width'>
+                <label for='cfgDisplay'>Display Refresh Interval (ms)</label>
+                <input id='cfgDisplay' type='number' min='500' max='300000' value='1000' required>
+              </div>
+            </div>
+            <button type='submit' id='btnSaveCfg'>Apply Settings</button>
+            <div class='alert-banner' id='cfgAlert'></div>
+          </form>
+          
+          <div class='btn-group'>
+            <button class='btn-secondary' id='btnFlush' title='Flush RAM buffer to SD card'>Force Flush</button>
+            <button class='btn-secondary' id='btnNtp' title='Force immediate NTP time sync attempt'>Sync NTP</button>
+          </div>
+          <div class='alert-banner' id='actionAlert'></div>
         </section>
       </div>
 
-      <div class='col'>
-        <section class='card'>
+      <div style='display: flex; flex-direction: column; gap: 20px;'>
+        <section class='card' style='flex: 1; display: flex; flex-direction: column;'>
           <h2>Historical Chart</h2>
-          <div class='controls'>
-            <label>Metric
+          <div class='controls-grid' style='grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 8px;'>
+            <div class='form-group'>
+              <label for='metric'>Metric</label>
               <select id='metric'>
-                <option value='temp_c'>Temperature (C)</option>
-                <option value='humidity_pct'>Humidity (%)</option>
-                <option value='pressure_hpa'>Pressure (hPa)</option>
+                <option value='temp_c'>Temperature</option>
+                <option value='humidity_pct'>Humidity</option>
+                <option value='pressure_hpa'>Pressure</option>
               </select>
-            </label>
-            <label>Range
+            </div>
+            <div class='form-group'>
+              <label for='range'>Range</label>
               <select id='range'>
-                <option value='15m'>Last 15 min</option>
-                <option value='1h' selected>Last 1 hour</option>
-                <option value='6h'>Last 6 hours</option>
-                <option value='24h'>Last 24 hours</option>
+                <option value='15m'>Last 15m</option>
+                <option value='1h' selected>Last 1h</option>
+                <option value='6h'>Last 6h</option>
+                <option value='24h'>Last 24h</option>
                 <option value='custom'>Custom</option>
               </select>
-            </label>
-            <label>Start (local)
-              <input id='start' type='datetime-local'>
-            </label>
-            <label>End (local)
-              <input id='end' type='datetime-local'>
-            </label>
-            <label>Max points
+            </div>
+            <div class='form-group'>
+              <label for='maxPoints'>Max Points</label>
               <input id='maxPoints' type='number' min='20' max='1000' value='300'>
-            </label>
-            <label>Load
-              <button id='btnLoad' type='button'>Refresh History</button>
-            </label>
+            </div>
           </div>
-          <canvas id='chart' width='720' height='240'></canvas>
-          <div class='meta' id='historyMeta'>No data loaded yet.</div>
-        </section>
+          
+          <div class='controls-grid' id='customRangeGroup' style='grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; display: none;'>
+            <div class='form-group'>
+              <label for='start'>Start Date/Time</label>
+              <input id='start' type='datetime-local'>
+            </div>
+            <div class='form-group'>
+              <label for='end'>End Date/Time</label>
+              <input id='end' type='datetime-local'>
+            </div>
+          </div>
 
-        <section class='card'>
-          <h2>Logs</h2>
-          <div class='logs' id='logs'>loading...</div>
-        </section>
+          <div style='display: flex; justify-content: flex-end; margin-bottom: 8px;'>
+            <button id='btnLoad' style='width: auto; padding: 10px 20px;'>Refresh History</button>
+          </div>
+          
+          <div class='alert-banner' id='historyAlert' style='margin-bottom: 10px;'></div>
 
-        <section class='card'>
-          <h2>Events (latest)</h2>
-          <pre id='events'>loading...</pre>
-        </section>
-
-        <section class='card'>
-          <h2>SD Card Tree</h2>
-          <pre id='sdtree'>loading...</pre>
+          <div class='chart-container'>
+            <canvas id='chart'></canvas>
+            <div class='chart-tooltip' id='tooltip'>
+              <div class='tooltip-date' id='tooltipDate'></div>
+              <div class='tooltip-val' id='tooltipVal'></div>
+              <div class='tooltip-q' id='tooltipQ'></div>
+            </div>
+          </div>
+          <div class='live-meta' id='historyMeta' style='margin-top: 12px; text-align: left;'>
+            No history data loaded.
+          </div>
         </section>
       </div>
+    </div>
+
+    <div class='grid-bottom'>
+      <section class='card'>
+        <h2>SD Files & Tree</h2>
+        <div class='scroll-area' id='sdtree'>loading...</div>
+      </section>
+
+      <section class='card'>
+        <h2>Downloads</h2>
+        <div class='scroll-area'>
+          <ul class='logs-list' id='logs'>
+            <li style='color: var(--text-sub);'>loading...</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class='card'>
+        <h2>Event Timeline</h2>
+        <div class='scroll-area'>
+          <div class='timeline-container' id='eventsTimeline'>
+            <div style='color: var(--text-sub);'>loading...</div>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 
   <script>
     const $ = (id) => document.getElementById(id);
-
-    function setText(id, text) {
-      $(id).textContent = text;
-    }
-
-    function setHtml(id, html) {
-      $(id).innerHTML = html;
-    }
+    
+    let chartPoints = [];
+    let minVal = 0;
+    let maxVal = 1;
+    let hoveredPoint = null;
 
     async function fetchJson(url) {
       const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) {
-        throw new Error(url + ' -> HTTP ' + res.status);
-      }
+      if (!res.ok) throw new Error(url + ' -> HTTP ' + res.status);
       return await res.json();
     }
 
     async function fetchText(url) {
       const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) {
-        throw new Error(url + ' -> HTTP ' + res.status);
-      }
+      if (!res.ok) throw new Error(url + ' -> HTTP ' + res.status);
       return await res.text();
     }
 
@@ -304,118 +686,255 @@ void WebManager::handleRoot() {
         ' ' + p(date.getHours()) + ':' + p(date.getMinutes()) + ':' + p(date.getSeconds());
     }
 
-    function kvHtml(obj, order) {
-      let out = '';
-      for (const key of order) {
-        const val = Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : '-';
-        out += '<div class="k">' + key + '</div><div class="v">' + val + '</div>';
-      }
-      return out;
-    }
-
     function updatePills(live, health) {
       const wifi = health.wifi_connected ? 'UP' : 'DOWN';
       const sd = health.sd_healthy ? 'OK' : 'BAD';
       const ntp = health.ntp_synced ? 'SYNC' : 'EST';
 
-      setText('pillWifi', 'WiFi: ' + wifi);
-      setText('pillSd', 'SD: ' + sd);
-      setText('pillNtp', 'NTP: ' + ntp);
+      $('pillWifi').textContent = wifi;
+      $('pillWifi').style.color = health.wifi_connected ? 'var(--success)' : 'var(--error)';
+      
+      $('pillSd').textContent = sd;
+      $('pillSd').style.color = health.sd_healthy ? 'var(--success)' : 'var(--error)';
+      
+      $('pillNtp').textContent = ntp;
+      $('pillNtp').style.color = health.ntp_synced ? 'var(--success)' : 'var(--warning)';
 
       let ip = '-';
       if (live && live.has_sample && typeof live.ip === 'string') {
         ip = live.ip;
+      } else if (health && typeof health.ip === 'string') {
+        ip = health.ip;
       }
-      setText('pillIp', 'IP: ' + ip);
-      setText('pillRef', 'Updated: ' + stampNow());
+      $('pillIp').textContent = ip;
+      $('pillRef').textContent = stampNow();
     }
 
-    function renderChart(points) {
-      const c = $('chart');
-      const ctx = c.getContext('2d');
-      const w = c.width;
-      const h = c.height;
-      const padL = 42;
-      const padR = 12;
-      const padT = 12;
-      const padB = 24;
+    function renderChart() {
+      const canvas = $('chart');
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+      
+      const w = rect.width;
+      const h = rect.height;
 
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, w, h);
 
-      ctx.strokeStyle = '#d2d9e3';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
-
-      const gx = padL;
-      const gy = padT;
+      const padL = 50;
+      const padR = 15;
+      const padT = 20;
+      const padB = 30;
       const gw = w - padL - padR;
       const gh = h - padT - padB;
 
-      ctx.strokeStyle = '#c8d0dd';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.lineWidth = 1;
       for (let i = 0; i <= 4; i++) {
-        const y = gy + (gh * i / 4);
+        const y = padT + (gh * i / 4);
         ctx.beginPath();
-        ctx.moveTo(gx, y);
-        ctx.lineTo(gx + gw, y);
+        ctx.moveTo(padL, y);
+        ctx.lineTo(w - padR, y);
         ctx.stroke();
       }
 
-      if (!points || points.length === 0) {
-        ctx.fillStyle = '#8b96a8';
-        ctx.font = '14px monospace';
-        ctx.fillText('No data in selected range.', gx + 8, gy + gh / 2);
+      if (chartPoints.length === 0) {
+        ctx.fillStyle = 'var(--text-sub)';
+        ctx.font = '13px var(--font-main)';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('No history data in this range.', padL + gw / 2, padT + gh / 2);
         return;
       }
 
-      let minV = Number.POSITIVE_INFINITY;
-      let maxV = Number.NEGATIVE_INFINITY;
-      for (const p of points) {
-        const v = Number(p.v);
-        if (Number.isFinite(v)) {
-          if (v < minV) minV = v;
-          if (v > maxV) maxV = v;
+      minVal = Number.POSITIVE_INFINITY;
+      maxVal = Number.NEGATIVE_INFINITY;
+      for (const p of chartPoints) {
+        const val = parseFloat(p.v);
+        if (!isNaN(val)) {
+          if (val < minVal) minVal = val;
+          if (val > maxVal) maxVal = val;
         }
       }
 
-      if (!Number.isFinite(minV) || !Number.isFinite(maxV)) {
-        minV = 0;
-        maxV = 1;
+      if (minVal === Number.POSITIVE_INFINITY || isNaN(minVal)) {
+        minVal = 0; maxVal = 100;
       }
-      if (maxV <= minV) {
-        maxV = minV + 1;
+      if (maxVal === minVal) {
+        maxVal = minVal + 1;
       }
 
-      ctx.fillStyle = '#4f5c70';
-      ctx.font = '11px monospace';
-      ctx.fillText(maxV.toFixed(2), 4, gy + 8);
-      ctx.fillText(minV.toFixed(2), 4, gy + gh);
+      const diff = maxVal - minVal;
+      minVal -= diff * 0.05;
+      maxVal += diff * 0.05;
 
-      ctx.strokeStyle = '#0d7a8a';
-      ctx.lineWidth = 2;
+      const metric = $('metric').value;
+      let strokeColor = '#06b6d4';
+      let fillColor1 = 'rgba(6, 182, 212, 0.25)';
+      let fillColor2 = 'rgba(6, 182, 212, 0)';
+      let suffix = '';
+      if (metric === 'temp_c') {
+        strokeColor = '#f43f5e';
+        fillColor1 = 'rgba(244, 63, 94, 0.25)';
+        fillColor2 = 'rgba(244, 63, 94, 0)';
+        suffix = ' °C';
+      } else if (metric === 'humidity_pct') {
+        strokeColor = '#06b6d4';
+        fillColor1 = 'rgba(6, 182, 212, 0.25)';
+        fillColor2 = 'rgba(6, 182, 212, 0)';
+        suffix = ' %';
+      } else if (metric === 'pressure_hpa') {
+        strokeColor = '#10b981';
+        fillColor1 = 'rgba(16, 185, 129, 0.25)';
+        fillColor2 = 'rgba(16, 185, 129, 0)';
+        suffix = ' hPa';
+      }
+
+      const getX = (index) => padL + (chartPoints.length <= 1 ? 0.5 : (index / (chartPoints.length - 1))) * gw;
+      const getY = (val) => padT + gh - ((val - minVal) / (maxVal - minVal)) * gh;
+
+      const grad = ctx.createLinearGradient(0, padT, 0, padT + gh);
+      grad.addColorStop(0, fillColor1);
+      grad.addColorStop(1, fillColor2);
+      ctx.fillStyle = grad;
       ctx.beginPath();
+      ctx.moveTo(getX(0), padT + gh);
+      for (let i = 0; i < chartPoints.length; i++) {
+        ctx.lineTo(getX(i), getY(chartPoints[i].v));
+      }
+      ctx.lineTo(getX(chartPoints.length - 1), padT + gh);
+      ctx.closePath();
+      ctx.fill();
 
-      for (let i = 0; i < points.length; i++) {
-        const p = points[i];
-        const v = Number(p.v);
-        const nx = (points.length <= 1) ? 0 : (i / (points.length - 1));
-        const ny = (v - minV) / (maxV - minV);
-        const x = gx + nx * gw;
-        const y = gy + (1 - ny) * gh;
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(getX(0), getY(chartPoints[0].v));
+      for (let i = 1; i < chartPoints.length; i++) {
+        ctx.lineTo(getX(i), getY(chartPoints[i].v));
       }
       ctx.stroke();
 
-      ctx.fillStyle = '#4f5c70';
-      ctx.fillText(points[0].ts || '-', gx, h - 8);
-      const endTs = points[points.length - 1].ts || '-';
-      const txtWidth = ctx.measureText(endTs).width;
-      ctx.fillText(endTs, gx + gw - txtWidth, h - 8);
+      ctx.fillStyle = 'var(--text-sub)';
+      ctx.font = '10px var(--font-mono)';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(maxVal.toFixed(1) + suffix, padL - 8, padT);
+      ctx.fillText(((maxVal + minVal) / 2).toFixed(1) + suffix, padL - 8, padT + gh / 2);
+      ctx.fillText(minVal.toFixed(1) + suffix, padL - 8, padT + gh);
+
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.font = '10px var(--font-mono)';
+      
+      const startT = chartPoints[0].ts.split(' ').slice(1).join(' ') || chartPoints[0].ts;
+      const endT = chartPoints[chartPoints.length - 1].ts.split(' ').slice(1).join(' ') || chartPoints[chartPoints.length - 1].ts;
+      ctx.fillText(startT, padL, padT + gh + 6);
+      
+      ctx.textAlign = 'right';
+      ctx.fillText(endT, w - padR, padT + gh + 6);
+
+      if (hoveredPoint !== null) {
+        const i = hoveredPoint.index;
+        const x = getX(i);
+        const y = getY(hoveredPoint.v);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, padT);
+        ctx.lineTo(x, padT + gh);
+        ctx.stroke();
+
+        ctx.fillStyle = strokeColor;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
+    $('chart').addEventListener('mousemove', (e) => {
+      if (chartPoints.length === 0) return;
+      const canvas = $('chart');
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const padL = 50;
+      const padR = 15;
+      const gw = rect.width - padL - padR;
+
+      let nearestIndex = 0;
+      let minDist = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < chartPoints.length; i++) {
+        const x = padL + (chartPoints.length <= 1 ? 0.5 : (i / (chartPoints.length - 1))) * gw;
+        const dist = Math.abs(x - mouseX);
+        if (dist < minDist) {
+          minDist = dist;
+          nearestIndex = i;
+        }
+      }
+
+      if (minDist < 40) {
+        const pt = chartPoints[nearestIndex];
+        hoveredPoint = {
+          index: nearestIndex,
+          v: pt.v,
+          ts: pt.ts,
+          q: pt.q
+        };
+        renderChart();
+
+        const tooltip = $('tooltip');
+        const metric = $('metric').value;
+        let suffix = '';
+        if (metric === 'temp_c') suffix = ' °C';
+        else if (metric === 'humidity_pct') suffix = ' %';
+        else if (metric === 'pressure_hpa') suffix = ' hPa';
+
+        $('tooltipDate').textContent = pt.ts;
+        $('tooltipVal').textContent = parseFloat(pt.v).toFixed(2) + suffix;
+        $('tooltipQ').textContent = 'Quality: ' + (pt.q === 'n' || pt.q === 'ntp' ? 'NTP' : 'Estimated');
+        
+        const xPos = padL + (chartPoints.length <= 1 ? 0.5 : (nearestIndex / (chartPoints.length - 1))) * gw;
+        
+        tooltip.style.left = (xPos + 10) + 'px';
+        tooltip.style.top = (mouseY - 60) + 'px';
+        tooltip.style.opacity = 1;
+      } else {
+        hoveredPoint = null;
+        renderChart();
+        $('tooltip').style.opacity = 0;
+      }
+    });
+
+    $('chart').addEventListener('mouseleave', () => {
+      hoveredPoint = null;
+      renderChart();
+      $('tooltip').style.opacity = 0;
+    });
+
+    window.addEventListener('resize', renderChart);
+
+    function validateDateRange(startStr, endStr) {
+      if (!startStr || !endStr) return "Both start and end date-times are required.";
+      const s = new Date(startStr);
+      const e = new Date(endStr);
+      if (isNaN(s.getTime()) || isNaN(e.getTime())) return "Invalid date format.";
+      if (e < s) return "End date-time must be greater than or equal to start date-time.";
+      const diffMs = e - s;
+      const maxMs = 7 * 24 * 60 * 60 * 1000;
+      if (diffMs > maxMs) return "Requested date range exceeds the maximum allowed range of 7 days.";
+      return null;
     }
 
     function buildHistoryQuery() {
@@ -452,19 +971,36 @@ void WebManager::handleRoot() {
     }
 
     async function loadHistory() {
+      const alert = $('historyAlert');
+      alert.style.display = 'none';
+      
+      if ($('range').value === 'custom') {
+        const err = validateDateRange($('start').value, $('end').value);
+        if (err) {
+          alert.textContent = err;
+          alert.className = 'alert-banner error';
+          alert.style.display = 'block';
+          return;
+        }
+      }
+
       try {
         setText('historyMeta', 'Loading history...');
         const q = buildHistoryQuery();
         const data = await fetchJson('/api/history?' + q);
-        const points = Array.isArray(data.points) ? data.points : [];
-        renderChart(points);
+        chartPoints = Array.isArray(data.points) ? data.points : [];
+        renderChart();
         setText('historyMeta',
-          'metric=' + (data.metric || '?') +
-          ' matched=' + (data.matched ?? 0) +
-          ' plotted=' + points.length);
+          'Metric: ' + (data.metric || '?') +
+          ' | Matched Samples: ' + (data.matched ?? 0) +
+          ' | Downsampled Points: ' + chartPoints.length);
       } catch (err) {
-        renderChart([]);
+        chartPoints = [];
+        renderChart();
         setText('historyMeta', 'History error: ' + err.message);
+        alert.textContent = 'History load failed: ' + err.message;
+        alert.className = 'alert-banner error';
+        alert.style.display = 'block';
       }
     }
 
@@ -472,31 +1008,58 @@ void WebManager::handleRoot() {
       try {
         const data = await fetchJson('/api/logs');
         const files = Array.isArray(data.files) ? data.files : [];
+        const container = $('logs');
         if (files.length === 0) {
-          setHtml('logs', '<div>No log files.</div>');
+          container.innerHTML = '<li style="color: var(--text-sub);">No log files found.</li>';
           return;
         }
 
-        let html = '<ul>';
+        let html = '';
         for (const f of files) {
           const n = f.name || '?';
-          const s = Number(f.size || 0);
+          const s = (f.size / 1024).toFixed(2);
           const p = '/api/logs/download?file=' + encodeURIComponent('/logs/' + n);
-          html += '<li><a href="' + p + '">' + n + '</a> (' + s + ' bytes)</li>';
+          html += '<li><a href="' + p + '">' + n + '</a> <span style="color: var(--text-sub); font-size: 0.75rem;">(' + s + ' KB)</span></li>';
         }
-        html += '</ul>';
-        setHtml('logs', html);
+        container.innerHTML = html;
       } catch (err) {
-        setHtml('logs', '<div class="bad">' + err.message + '</div>');
+        $('logs').innerHTML = '<li style="color: var(--error);">' + err.message + '</li>';
       }
     }
 
     async function loadEvents() {
       try {
-        const data = await fetchJson('/api/events?limit=20');
-        setText('events', JSON.stringify(data, null, 2));
+        const data = await fetchJson('/api/events?limit=30');
+        const timeline = $('eventsTimeline');
+        const list = Array.isArray(data.events) ? data.events : [];
+        
+        if (list.length === 0) {
+          timeline.innerHTML = '<div style="color: var(--text-sub); font-size:0.75rem;">No events logged.</div>';
+          return;
+        }
+
+        const reversedList = [...list].reverse();
+        let html = '';
+        for (const e of reversedList) {
+          let severity = 'info';
+          const evLower = e.event.toLowerCase();
+          if (evLower.indexOf('error') >= 0 || evLower.indexOf('fail') >= 0) {
+            severity = 'error';
+          } else if (evLower.indexOf('warn') >= 0) {
+            severity = 'warning';
+          } else if (e.event === 'ntp_reestablished') {
+            severity = 'ntp_reestablished';
+          }
+          
+          const timePart = e.ts.split(' ').slice(1).join(' ') || e.ts;
+          html += '<div class="timeline-item ' + severity + '">';
+          html += '  <div class="timeline-time">' + timePart + '</div>';
+          html += '  <div class="timeline-content">' + e.event + '</div>';
+          html += '</div>';
+        }
+        timeline.innerHTML = html;
       } catch (err) {
-        setText('events', 'Error: ' + err.message);
+        $('eventsTimeline').innerHTML = '<div style="color: var(--error); font-size:0.75rem;">' + err.message + '</div>';
       }
     }
 
@@ -507,54 +1070,151 @@ void WebManager::handleRoot() {
           fetchJson('/api/health')
         ]);
 
-        setHtml('liveKv', kvHtml(live, [
-          'timestamp',
-          'timestamp_quality',
-          'temp_c',
-          'humidity_pct',
-          'pressure_hpa',
-          'uptime_s'
-        ]));
+        if (live && live.has_sample) {
+          $('valTemp').textContent = parseFloat(live.temp_c).toFixed(1) + ' °C';
+          $('valHum').textContent = parseFloat(live.humidity_pct).toFixed(1) + ' %';
+          $('valPres').textContent = parseFloat(live.pressure_hpa).toFixed(1) + ' hPa';
+          $('liveTime').textContent = 'Timestamp: ' + live.timestamp;
+          $('liveQuality').textContent = live.timestamp_quality;
+          $('liveQuality').style.color = live.timestamp_quality === 'ntp' ? 'var(--success)' : 'var(--warning)';
+        }
 
-        setHtml('healthKv', kvHtml(health, [
-          'uptime_s',
-          'free_heap_bytes',
-          'largest_free_block_bytes',
-          'log_queue_depth',
-          'log_queue_capacity',
-          'dropped_log_samples',
-          'wifi_connected',
-          'sd_healthy',
-          'ntp_synced'
-        ]));
+        if (health && health.has_health) {
+          // Format uptime
+          const up = health.uptime_s;
+          const hrs = Math.floor(up / 3600);
+          const mins = Math.floor((up % 3600) / 60);
+          const secs = up % 60;
+          $('healthUptime').textContent = hrs + 'h ' + mins + 'm ' + secs + 's';
+          
+          $('healthHeap').textContent = (health.free_heap_bytes / 1024).toFixed(1) + ' KB';
+          const heapPercent = Math.max(0, Math.min(100, (health.free_heap_bytes / 81920) * 100));
+          $('barHeap').style.width = heapPercent + '%';
+
+          $('healthBlock').textContent = (health.largest_free_block_bytes / 1024).toFixed(1) + ' KB';
+          
+          $('healthQueue').textContent = health.log_queue_depth + ' / ' + health.log_queue_capacity;
+          const queuePercent = Math.max(0, Math.min(100, (health.log_queue_depth / health.log_queue_capacity) * 100));
+          $('barQueue').style.width = queuePercent + '%';
+
+          $('healthDropped').textContent = health.dropped_log_samples;
+          if (health.dropped_log_samples > 0) {
+            $('healthDropped').style.color = 'var(--error)';
+          }
+        }
 
         updatePills(live, health);
       } catch (err) {
-        setText('pillRef', 'Updated: error');
+        console.error("Poller error", err);
+      }
+    }
+
+    async function loadConfig() {
+      try {
+        const cfg = await fetchJson('/api/config');
+        $('cfgSample').value = cfg.sample_interval_ms;
+        $('cfgFlush').value = cfg.log_flush_interval_ms;
+        $('cfgDisplay').value = cfg.display_refresh_interval_ms;
+      } catch (err) {
+        console.error("Config fetch error", err);
       }
     }
 
     async function loadStaticPanels() {
       try {
-        const cfg = await fetchJson('/api/config');
-        setText('cfg', JSON.stringify(cfg, null, 2));
-      } catch (err) {
-        setText('cfg', 'Error: ' + err.message);
-      }
-
-      try {
         const tree = await fetchText('/api/sd-tree');
-        setText('sdtree', tree);
+        $('sdtree').textContent = tree;
       } catch (err) {
-        setText('sdtree', 'Error: ' + err.message);
+        $('sdtree').textContent = 'Error: ' + err.message;
       }
+    }
+
+    function setText(id, text) {
+      $(id).textContent = text;
     }
 
     function onRangeChanged() {
       const custom = $('range').value === 'custom';
-      $('start').disabled = !custom;
-      $('end').disabled = !custom;
+      $('customRangeGroup').style.display = custom ? 'grid' : 'none';
+      if (custom) {
+        const now = new Date();
+        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+        if (!$('start').value) {
+          $('start').value = new Date(oneHourAgo.getTime() - oneHourAgo.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        }
+        if (!$('end').value) {
+          $('end').value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        }
+      }
     }
+
+    $('cfgForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const alert = $('cfgAlert');
+      alert.style.display = 'none';
+      
+      const payload = {
+        sample_interval_ms: parseInt($('cfgSample').value),
+        log_flush_interval_ms: parseInt($('cfgFlush').value),
+        display_refresh_interval_ms: parseInt($('cfgDisplay').value)
+      };
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        
+        const data = await res.json();
+        alert.style.display = 'block';
+        if (data.accepted) {
+          alert.textContent = data.message || "Config applied successfully.";
+          alert.className = 'alert-banner success';
+        } else {
+          alert.textContent = "Preview response: " + (data.message || "Config apply not accepted.");
+          alert.className = 'alert-banner warning';
+          if (data.current) {
+            $('cfgSample').value = data.current.sample_interval_ms;
+            $('cfgFlush').value = data.current.log_flush_interval_ms;
+            $('cfgDisplay').value = data.current.display_refresh_interval_ms;
+          }
+        }
+      } catch (err) {
+        alert.textContent = "Error applying settings: " + err.message;
+        alert.className = 'alert-banner error';
+        alert.style.display = 'block';
+      }
+    });
+
+    async function triggerAction(url, btnId) {
+      const alert = $('actionAlert');
+      const btn = $(btnId);
+      alert.style.display = 'none';
+      btn.disabled = true;
+      try {
+        const res = await fetch(url, { method: 'POST' });
+        const data = await res.json();
+        alert.style.display = 'block';
+        if (data.success) {
+          alert.textContent = data.message;
+          alert.className = 'alert-banner success';
+        } else {
+          alert.textContent = "Action failed: " + data.message;
+          alert.className = 'alert-banner error';
+        }
+      } catch (err) {
+        alert.textContent = "Network error: " + err.message;
+        alert.className = 'alert-banner error';
+        alert.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => { alert.style.display = 'none'; }, 6000);
+      }
+    }
+
+    $('btnFlush').addEventListener('click', () => triggerAction('/api/action/flush-now', 'btnFlush'));
+    $('btnNtp').addEventListener('click', () => triggerAction('/api/action/ntp-retry', 'btnNtp'));
 
     $('btnLoad').addEventListener('click', loadHistory);
     $('range').addEventListener('change', () => {
@@ -565,6 +1225,7 @@ void WebManager::handleRoot() {
 
     (async function boot() {
       onRangeChanged();
+      await loadConfig();
       await loadStaticPanels();
       await loadSnapshot();
       await loadLogs();
@@ -1063,4 +1724,36 @@ void WebManager::handleSdTreeText() {
   root.close();
 
   server_.send(200, "text/plain", tree);
+}
+
+void WebManager::handleFlushNow() {
+  if (loggerManager_ == nullptr) {
+    sendJsonError(500, "LoggerManager not initialized");
+    return;
+  }
+
+  const bool success = loggerManager_->flush();
+  StaticJsonDocument<128> doc;
+  doc["success"] = success;
+  doc["message"] = success ? "RAM buffer flushed to SD card" : "Flush failed or queue empty";
+
+  String response;
+  serializeJson(doc, response);
+  server_.send(200, "application/json", response);
+}
+
+void WebManager::handleNtpRetry() {
+  if (timeManager_ == nullptr) {
+    sendJsonError(500, "TimeManager not initialized");
+    return;
+  }
+
+  timeManager_->forceNtpRetry();
+  StaticJsonDocument<128> doc;
+  doc["success"] = true;
+  doc["message"] = "NTP sync retry triggered";
+
+  String response;
+  serializeJson(doc, response);
+  server_.send(200, "application/json", response);
 }

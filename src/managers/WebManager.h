@@ -6,9 +6,12 @@
 #include "models/Sample.h"
 #include "models/SystemHealth.h"
 
+class LoggerManager;
+class TimeManager;
+
 class WebManager {
  public:
-  bool begin(const char* ssid, const char* password, const char* hostname);
+  bool begin(const char* ssid, const char* password, const char* hostname, LoggerManager* logger = nullptr, TimeManager* time = nullptr);
   void loop();
 
   void setLatestSample(const Sample* sample) { latestSample_ = sample; }
@@ -26,6 +29,8 @@ class WebManager {
   void handleLogsJson();
   void handleLogDownload();
   void handleSdTreeText();
+  void handleFlushNow();
+  void handleNtpRetry();
   void appendSdTree(File entry, String& out, uint8_t depth);
   void appendIndent(String& out, uint8_t depth);
 
@@ -41,4 +46,6 @@ class WebManager {
   ESP8266WebServer server_{80};
   const Sample* latestSample_ = nullptr;
   const SystemHealth* health_ = nullptr;
+  LoggerManager* loggerManager_ = nullptr;
+  TimeManager* timeManager_ = nullptr;
 };

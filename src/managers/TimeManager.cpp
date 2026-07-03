@@ -45,6 +45,10 @@ bool TimeManager::consumeNtpReestablishedFlag() {
   return flag;
 }
 
+void TimeManager::forceNtpRetry() {
+  lastSyncAttemptMs_ = 0;
+}
+
 bool TimeManager::trySyncTime() {
   struct tm timeInfo;
   const bool ok = getLocalTime(&timeInfo, 1000);

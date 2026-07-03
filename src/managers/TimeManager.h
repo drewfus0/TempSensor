@@ -11,6 +11,7 @@ class TimeManager {
   void getTimestamp(char* out, size_t outSize, TimestampQuality& quality) const;
   bool isNtpSynced() const { return ntpSynced_; }
   bool consumeNtpReestablishedFlag();
+  void forceNtpRetry();
 
  private:
   bool trySyncTime();
