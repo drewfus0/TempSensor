@@ -134,22 +134,30 @@ bool LoggerManager::flush() {
     String filepath = "/logs/" + String(dateStr) + ".bin";
     File file;
     bool exists = SD.exists(filepath);
+    size_t foundSize = 0;
     if (exists) {
       File checkFile = SD.open(filepath, "r");
       if (checkFile) {
-        if (checkFile.size() != 86400 * sizeof(LogRecord)) {
+        foundSize = checkFile.size();
+        if (foundSize != 86400 * sizeof(LogRecord)) {
           exists = false;
         }
         checkFile.close();
+      } else {
+        Serial.printf("[Logger] Check open failed for %s\n", filepath.c_str());
+        exists = false;
       }
     }
+
+    Serial.printf("[Logger] File %s exists=%d size=%d\n", filepath.c_str(), exists, foundSize);
 
     if (!exists) {
       if (SD.exists(filepath)) {
         SD.remove(filepath);
       }
-      file = SD.open(filepath, "w"); // Create file
+      file = SD.open(filepath, "w+"); // Open in read/write/create mode
       if (file) {
+        Serial.printf("[Logger] Starting pre-allocation for %s\n", filepath.c_str());
         bool success = preAllocateDailyFile(file);
         if (!success) {
           Serial.printf("[Logger] Failed to pre-allocate binary file %s\n", filepath.c_str());
@@ -159,9 +167,8 @@ bool LoggerManager::flush() {
           sdHealthy_ = false;
           break;
         }
-        file.close();
+        Serial.printf("[Logger] Pre-allocation successful for %s\n", filepath.c_str());
       }
-      file = SD.open(filepath, "r+");
     } else {
       file = SD.open(filepath, "r+"); // Open for random write
     }
@@ -169,7 +176,7 @@ bool LoggerManager::flush() {
     if (!file) {
       allWritten = false;
       sdHealthy_ = false;
-      Serial.printf("[Logger] Failed to open binary file %s\n", filepath.c_str());
+      Serial.printf("[Logger] Failed to open binary file %s (mode=%s)\n", filepath.c_str(), exists ? "r+" : "w+");
       break;
     }
 
