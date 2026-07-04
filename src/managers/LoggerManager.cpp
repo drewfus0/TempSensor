@@ -41,6 +41,32 @@ bool LoggerManager::flushIfDue(uint32_t nowMs, uint32_t flushIntervalMs) {
   return flush();
 }
 
+static bool preAllocateDailyFile(File& file) {
+  // 86400 records * 17 bytes = 1,468,800 bytes.
+  // Chunk size: 102 records * 17 bytes = 1734 bytes (approx 1.7 KB, fits stack)
+  LogRecord emptyRecords[102];
+  for (int i = 0; i < 102; ++i) {
+    memset(&emptyRecords[i], 0, sizeof(LogRecord));
+    emptyRecords[i].quality = 2; // Empty/Invalid
+  }
+
+  for (int chunk = 0; chunk < 847; ++chunk) {
+    size_t written = file.write(reinterpret_cast<const uint8_t*>(emptyRecords), 102 * sizeof(LogRecord));
+    if (written < 102 * sizeof(LogRecord)) {
+      return false;
+    }
+    yield(); // Prevent hardware watchdog timeouts
+  }
+
+  size_t written = file.write(reinterpret_cast<const uint8_t*>(emptyRecords), 6 * sizeof(LogRecord));
+  if (written < 6 * sizeof(LogRecord)) {
+    return false;
+  }
+
+  file.flush();
+  return true;
+}
+
 bool LoggerManager::flush() {
   if (queue_.empty()) {
     return true;
@@ -110,8 +136,35 @@ bool LoggerManager::flush() {
 
     String filepath = "/logs/" + String(dateStr) + ".bin";
     File file;
-    if (!SD.exists(filepath)) {
+    bool exists = SD.exists(filepath);
+    if (exists) {
+      File checkFile = SD.open(filepath, "r");
+      if (checkFile) {
+        if (checkFile.size() != 86400 * sizeof(LogRecord)) {
+          exists = false;
+        }
+        checkFile.close();
+      }
+    }
+
+    if (!exists) {
+      if (SD.exists(filepath)) {
+        SD.remove(filepath);
+      }
       file = SD.open(filepath, "w"); // Create file
+      if (file) {
+        bool success = preAllocateDailyFile(file);
+        if (!success) {
+          Serial.printf("[Logger] Failed to pre-allocate binary file %s\n", filepath.c_str());
+          file.close();
+          SD.remove(filepath); // Clean up incomplete file
+          allWritten = false;
+          sdHealthy_ = false;
+          break;
+        }
+        file.close();
+      }
+      file = SD.open(filepath, "r+");
     } else {
       file = SD.open(filepath, "r+"); // Open for random write
     }
