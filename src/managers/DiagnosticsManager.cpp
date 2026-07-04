@@ -4,7 +4,7 @@
 
 void DiagnosticsManager::printPeriodic(const SystemHealth& health) {
   Serial.printf(
-  "[Diag] uptime=%lus free_heap=%lu largest_block=%lu logq=%u/%u dropped=%lu wifi=%s sd=%s ntp=%s\n",
+  "[Diag] uptime=%lus free_heap=%lu largest_block=%lu logq=%u/%u dropped=%lu wifi=%s sd=%s ntp=%s vbat=%.2fV bat=%d%% (%s)\n",
       static_cast<unsigned long>(health.uptimeSeconds),
       static_cast<unsigned long>(health.freeHeapBytes),
       static_cast<unsigned long>(health.largestFreeBlockBytes),
@@ -13,5 +13,8 @@ void DiagnosticsManager::printPeriodic(const SystemHealth& health) {
       static_cast<unsigned long>(health.droppedLogSamples),
       health.wifiConnected ? "up" : "down",
       health.sdHealthy ? "ok" : "bad",
-      health.ntpSynced ? "yes" : "no");
+      health.ntpSynced ? "yes" : "no",
+      health.batteryVoltage,
+      health.batteryPercent,
+      health.batteryStatus);
 }

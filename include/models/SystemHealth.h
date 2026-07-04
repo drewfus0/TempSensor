@@ -12,4 +12,9 @@ struct SystemHealth {
   bool wifiConnected = false;
   bool sdHealthy = false;
   bool ntpSynced = false;
+
+  float batteryVoltage = 0.0f;
+  int batteryPercent = 0;
+  const char* batteryStatus = "Unknown";
+  int32_t batteryTimeRemainingSeconds = -1;
 };

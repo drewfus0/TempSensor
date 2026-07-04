@@ -10,6 +10,10 @@ constexpr uint32_t DISPLAY_REFRESH_INTERVAL_MS = SAMPLE_INTERVAL_MS;
 constexpr uint32_t DIAGNOSTICS_INTERVAL_MS = 30000;
 constexpr uint32_t NTP_RETRY_INTERVAL_MS = 30000;
 
+constexpr int BATTERY_ADC_PIN = A0;
+constexpr float BATTERY_CALIBRATION_FACTOR = 0.00418f;
+constexpr uint32_t BATTERY_READ_INTERVAL_MS = 5000;
+
 constexpr size_t MAX_LOG_QUEUE_SIZE = 512;
 
 constexpr char WIFI_SSID[] = "ImWifiRick";

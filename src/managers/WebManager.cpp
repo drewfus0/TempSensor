@@ -91,6 +91,8 @@ void WebManager::loop() {
 
 void WebManager::registerRoutes() {
   server_.on("/", [this]() { handleRoot(); });
+  server_.on("/sys/uplot.js", HTTP_GET, [this]() { handleLocalUPlotJs(); });
+  server_.on("/sys/uplot.css", HTTP_GET, [this]() { handleLocalUPlotCss(); });
   server_.on("/api/live", [this]() { handleLiveJson(); });
   server_.on("/api/health", [this]() { handleHealthJson(); });
   server_.on("/api/config", HTTP_GET, [this]() { handleConfigGet(); });
@@ -115,8 +117,8 @@ void WebManager::handleRoot() {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
+  <link rel="stylesheet" href="/sys/uplot.css">
+  <script src="/sys/uplot.js"></script>
   <style>
     :root {
       --bg: #090d16;
@@ -286,6 +288,44 @@ void WebManager::handleRoot() {
     }
     .health-lbl { font-size: 0.72rem; color: var(--text-sub); margin-bottom: 4px; }
     .health-val { font-family: var(--font-mono); font-size: 0.9rem; font-weight: 600; }
+    
+    .battery-icon-container {
+      position: relative;
+      width: 28px;
+      height: 14px;
+      display: flex;
+      align-items: center;
+    }
+    .battery-body {
+      width: 25px;
+      height: 14px;
+      border: 1.5px solid var(--text-sub);
+      border-radius: 3px;
+      padding: 1px;
+      display: flex;
+    }
+    .battery-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--success);
+      border-radius: 1px;
+      transition: width 0.3s ease, background-color 0.3s ease;
+    }
+    .battery-tip {
+      width: 3px;
+      height: 6px;
+      background: var(--text-sub);
+      border-radius: 0 1px 1px 0;
+    }
+    .charging-bolt {
+      position: absolute;
+      top: -2px;
+      left: 10px;
+      color: #fbbf24;
+      font-size: 10px;
+      font-weight: bold;
+      text-shadow: 0 0 2px rgba(0,0,0,0.8);
+    }
     
     .progress-bar-container {
       width: 100%;
@@ -687,6 +727,21 @@ void WebManager::handleRoot() {
             <div class='health-item'>
               <div class='health-lbl'>Dropped Samples</div>
               <div class='health-val' id='healthDropped'>-</div>
+            </div>
+            <div class='health-item full-width' style='border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px; background: transparent; border-left: none; border-right: none; border-bottom: none; border-radius: 0;'>
+              <div class='health-lbl' style='display:flex; align-items:center; justify-content:space-between;'>
+                <span>Battery Status</span>
+                <span id='healthBatStatus' style='font-size:0.65rem; color:var(--text-sub);'>-</span>
+              </div>
+              <div style='display:flex; align-items:center; gap:10px; margin-top:6px;'>
+                <div id='batteryIcon' class='battery-icon-container'>
+                  <div class='battery-body'>
+                    <div id='batteryLevelBar' class='battery-fill'></div>
+                  </div>
+                  <div class='battery-tip'></div>
+                </div>
+                <div class='health-val' id='healthBatText' style='margin:0;'>-</div>
+              </div>
             </div>
           </div>
         </section>
@@ -1296,6 +1351,57 @@ void WebManager::handleRoot() {
           if (health.dropped_log_samples > 0) {
             $('healthDropped').style.color = 'var(--error)';
           }
+
+          if (health.battery) {
+            const bat = health.battery;
+            const percent = bat.percent;
+            const voltage = bat.voltage.toFixed(2);
+            
+            let timeText = "";
+            if (bat.status === "Full") {
+              timeText = "Full (External Power)";
+            } else if (bat.status === "Charging / USB") {
+              timeText = "Charging via USB";
+            } else {
+              const tRemaining = bat.time_remaining;
+              if (tRemaining > 0) {
+                const tHrs = Math.floor(tRemaining / 3600);
+                const tMins = Math.floor((tRemaining % 3600) / 60);
+                timeText = `${tHrs}h ${tMins}m remaining (Discharging)`;
+              } else {
+                timeText = "Discharging";
+              }
+            }
+            
+            $('healthBatStatus').textContent = timeText;
+            $('healthBatText').textContent = percent + '% (' + voltage + ' V)';
+            
+            const fill = $('batteryLevelBar');
+            fill.style.width = percent + '%';
+            
+            if (percent > 50) {
+              fill.style.backgroundColor = 'var(--success)';
+            } else if (percent > 20) {
+              fill.style.backgroundColor = '#fbbf24';
+            } else {
+              fill.style.backgroundColor = 'var(--error)';
+            }
+            
+            const container = $('batteryIcon');
+            let bolt = container.querySelector('.charging-bolt');
+            if (bat.status === "Charging / USB") {
+              if (!bolt) {
+                bolt = document.createElement('div');
+                bolt.className = 'charging-bolt';
+                bolt.innerHTML = '⚡';
+                container.appendChild(bolt);
+              }
+            } else {
+              if (bolt) {
+                bolt.remove();
+              }
+            }
+          }
         }
         lastHealth = health;
         updatePills(lastLive, lastHealth);
@@ -1458,6 +1564,34 @@ void WebManager::handleRoot() {
   server_.send_P(200, "text/html", html);
 }
 
+void WebManager::handleLocalUPlotJs() {
+  if (!ensureSdReady()) {
+    sendJsonError(503, "SD card unavailable");
+    return;
+  }
+  File file = SD.open("/sys/uplot.js", "r");
+  if (!file) {
+    sendJsonError(404, "Asset /sys/uplot.js not found");
+    return;
+  }
+  server_.streamFile(file, "application/javascript");
+  file.close();
+}
+
+void WebManager::handleLocalUPlotCss() {
+  if (!ensureSdReady()) {
+    sendJsonError(503, "SD card unavailable");
+    return;
+  }
+  File file = SD.open("/sys/uplot.css", "r");
+  if (!file) {
+    sendJsonError(404, "Asset /sys/uplot.css not found");
+    return;
+  }
+  server_.streamFile(file, "text/css");
+  file.close();
+}
+
 void WebManager::handleLiveJson() {
   StaticJsonDocument<384> doc;
 
@@ -1479,7 +1613,7 @@ void WebManager::handleLiveJson() {
 }
 
 void WebManager::handleHealthJson() {
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<768> doc;
 
   if (health_ != nullptr) {
     doc["uptime_s"] = health_->uptimeSeconds;
@@ -1491,6 +1625,13 @@ void WebManager::handleHealthJson() {
     doc["wifi_connected"] = health_->wifiConnected;
     doc["sd_healthy"] = health_->sdHealthy;
     doc["ntp_synced"] = health_->ntpSynced;
+    
+    JsonObject battery = doc.createNestedObject("battery");
+    battery["voltage"] = health_->batteryVoltage;
+    battery["percent"] = health_->batteryPercent;
+    battery["status"] = health_->batteryStatus;
+    battery["time_remaining"] = health_->batteryTimeRemainingSeconds;
+    
     doc["has_health"] = true;
   } else {
     doc["has_health"] = false;

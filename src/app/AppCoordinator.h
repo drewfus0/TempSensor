@@ -7,6 +7,7 @@
 #include "managers/SensorManager.h"
 #include "managers/TimeManager.h"
 #include "managers/WebManager.h"
+#include "managers/BatteryManager.h"
 #include "models/Sample.h"
 #include "models/SystemHealth.h"
 
@@ -20,6 +21,7 @@ class AppCoordinator {
   void handleDisplayRefresh(uint32_t nowMs);
   void handleDiagnostics(uint32_t nowMs);
   void refreshHealth(uint32_t nowMs);
+  void provisionWebAssets();
 
   SensorManager sensorManager_;
   TimeManager timeManager_;
@@ -27,6 +29,7 @@ class AppCoordinator {
   DisplayManager displayManager_;
   WebManager webManager_;
   DiagnosticsManager diagnosticsManager_;
+  BatteryManager batteryManager_;
 
   Sample latestSample_{};
   bool hasSample_ = false;

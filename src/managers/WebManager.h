@@ -26,6 +26,8 @@ class WebManager {
  private:
   void registerRoutes();
   void handleRoot();
+  void handleLocalUPlotJs();
+  void handleLocalUPlotCss();
   void handleLiveJson();
   void handleHealthJson();
   void handleConfigGet();

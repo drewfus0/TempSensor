@@ -242,7 +242,9 @@ void DisplayManager::renderLatest(const Sample& sample,
                                   bool wifiConnected,
                                   bool ntpSynced,
                                   bool sdHealthy,
-                                  const char* ipAddress) {
+                                  const char* ipAddress,
+                                  int batteryPercent,
+                                  const char* batteryStatus) {
   if (!ready_) {
     return;
   }
@@ -266,7 +268,22 @@ void DisplayManager::renderLatest(const Sample& sample,
   display.printf("H:%2.1f%%\n", sample.humidityPct);
   display.printf("P:%4.0fhPa\n", sample.pressureHpa);
   display.println(statusBuf);
-  display.println(ntpSynced ? tsBuf : "syncing");
+
+  // Rotate between timestamp and battery status every 3 seconds
+  const uint32_t sec = millis() / 3000;
+  if (batteryPercent >= 0 && batteryStatus != nullptr && (sec % 2 == 1)) {
+    char batBuf[16]{};
+    if (strcmp(batteryStatus, "Full") == 0) {
+      snprintf(batBuf, sizeof(batBuf), "Bat:Full");
+    } else if (strcmp(batteryStatus, "Charging / USB") == 0) {
+      snprintf(batBuf, sizeof(batBuf), "Bat:%d%% Chg", batteryPercent);
+    } else {
+      snprintf(batBuf, sizeof(batBuf), "Bat:%d%% Dis", batteryPercent);
+    }
+    display.println(batBuf);
+  } else {
+    display.println(ntpSynced ? tsBuf : "syncing");
+  }
 
   const char* ipText = (ipAddress && ipAddress[0] != '\0') ? ipAddress : "0.0.0.0";
   drawTinyText(ipText, 0, display.height() - TINY_CHAR_HEIGHT);

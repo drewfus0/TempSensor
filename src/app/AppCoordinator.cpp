@@ -2,6 +2,8 @@
 
 #include <ESP8266WiFi.h>
 #include <SPI.h>
+#include <SD.h>
+#include "web/uplot_assets.h"
 
 void AppCoordinator::begin() {
   Serial.println("\n[App] Booting TempSensor milestone-1 firmware...");
@@ -17,6 +19,8 @@ void AppCoordinator::begin() {
   // Initialize shared SPI bus for ESP8266 hardware SPI pins.
   SPI.begin();
 
+  batteryManager_.begin();
+
   const bool sensorOk =
       sensorManager_.begin(AppConfig::I2C_SDA_PIN, AppConfig::I2C_SCL_PIN, AppConfig::BME280_I2C_ADDR);
   displayManager_.showStartupStatus("Sensor", sensorManager_.getStatus(), nullptr, !sensorOk);
@@ -24,6 +28,10 @@ void AppCoordinator::begin() {
   const bool sdOk = loggerManager_.begin(
       AppConfig::SD_CS_PIN, AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
   displayManager_.showStartupStatus("SD", sdOk ? "Ready" : "Init failed", loggerManager_.getSdDiagDetail(), !sdOk);
+
+  if (sdOk) {
+    provisionWebAssets();
+  }
 
   webManager_.begin(AppConfig::WIFI_SSID, AppConfig::WIFI_PASSWORD, AppConfig::HOSTNAME, &loggerManager_, &timeManager_);
   webManager_.registerYieldCallback([](void* arg) {
@@ -56,6 +64,7 @@ void AppCoordinator::loop() {
   const uint32_t nowMs = millis();
 
   timeManager_.update(nowMs, AppConfig::NTP_RETRY_INTERVAL_MS);
+  batteryManager_.update(nowMs);
   if (timeManager_.consumeNtpReestablishedFlag()) {
     char ts[32]{};
     TimestampQuality quality = TimestampQuality::Estimated;
@@ -121,7 +130,7 @@ void AppCoordinator::handleDisplayRefresh(uint32_t nowMs) {
   }
 
   displayManager_.renderLatest(latestSample_, (WiFi.status() == WL_CONNECTED), timeManager_.isNtpSynced(),
-                               loggerManager_.isSdHealthy(), ipBuf);
+                               loggerManager_.isSdHealthy(), ipBuf, batteryManager_.getPercent(), batteryManager_.getStatus());
 }
 
 void AppCoordinator::handleDiagnostics(uint32_t nowMs) {
@@ -144,4 +153,59 @@ void AppCoordinator::refreshHealth(uint32_t nowMs) {
   health_.wifiConnected = (WiFi.status() == WL_CONNECTED);
   health_.sdHealthy = loggerManager_.isSdHealthy();
   health_.ntpSynced = timeManager_.isNtpSynced();
+
+  health_.batteryVoltage = batteryManager_.getVoltage();
+  health_.batteryPercent = batteryManager_.getPercent();
+  health_.batteryStatus = batteryManager_.getStatus();
+  health_.batteryTimeRemainingSeconds = batteryManager_.getTimeRemainingSeconds();
+}
+
+void AppCoordinator::provisionWebAssets() {
+  if (!loggerManager_.isSdHealthy()) {
+    Serial.println("[App] SD card unhealthy. Skipping web assets provisioning.");
+    return;
+  }
+
+  if (!SD.exists("/sys")) {
+    if (SD.mkdir("/sys")) {
+      Serial.println("[App] Created /sys directory on SD card");
+    } else {
+      Serial.println("[App] Failed to create /sys directory");
+      return;
+    }
+  }
+
+  // Provision uplot.css
+  if (!SD.exists("/sys/uplot.css")) {
+    Serial.println("[App] Provisioning /sys/uplot.css to SD card...");
+    File f = SD.open("/sys/uplot.css", "w");
+    if (f) {
+      const char* ptr = UPLOT_CSS;
+      char c;
+      while ((c = pgm_read_byte(ptr++))) {
+        f.write(c);
+      }
+      f.close();
+      Serial.println("[App] Provisioned /sys/uplot.css successfully");
+    } else {
+      Serial.println("[App] Failed to open /sys/uplot.css for writing");
+    }
+  }
+
+  // Provision uplot.js
+  if (!SD.exists("/sys/uplot.js")) {
+    Serial.println("[App] Provisioning /sys/uplot.js to SD card...");
+    File f = SD.open("/sys/uplot.js", "w");
+    if (f) {
+      const char* ptr = UPLOT_JS;
+      char c;
+      while ((c = pgm_read_byte(ptr++))) {
+        f.write(c);
+      }
+      f.close();
+      Serial.println("[App] Provisioned /sys/uplot.js successfully");
+    } else {
+      Serial.println("[App] Failed to open /sys/uplot.js for writing");
+    }
+  }
 }
