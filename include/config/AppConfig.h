@@ -14,7 +14,7 @@ constexpr int BATTERY_ADC_PIN = A0;
 constexpr float BATTERY_CALIBRATION_FACTOR = 0.00418f;
 constexpr uint32_t BATTERY_READ_INTERVAL_MS = 5000;
 
-constexpr size_t MAX_LOG_QUEUE_SIZE = 512;
+constexpr size_t MAX_LOG_QUEUE_SIZE = 128;
 
 constexpr char WIFI_SSID[] = "ImWifiRick";
 constexpr char WIFI_PASSWORD[] = "1234567890";

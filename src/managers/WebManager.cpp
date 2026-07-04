@@ -7,6 +7,7 @@
 #include "config/AppConfig.h"
 #include "managers/LoggerManager.h"
 #include "managers/TimeManager.h"
+#include "web/uplot_assets.h"
 
 namespace {
 class FastLineReader {
@@ -1130,7 +1131,7 @@ void WebManager::handleRoot() {
         return;
       }
 
-      const chunkMs = 4 * 3600 * 1000; // 4 hours in milliseconds
+      const chunkMs = 1 * 3600 * 1000; // 1 hour in milliseconds (smaller chunk to prevent gaps in data logging)
       const totalMs = endDate.getTime() - startDate.getTime();
       const numChunks = Math.ceil(totalMs / chunkMs);
       
@@ -1565,31 +1566,13 @@ void WebManager::handleRoot() {
 }
 
 void WebManager::handleLocalUPlotJs() {
-  if (!ensureSdReady()) {
-    sendJsonError(503, "SD card unavailable");
-    return;
-  }
-  File file = SD.open("/sys/uplot.js", "r");
-  if (!file) {
-    sendJsonError(404, "Asset /sys/uplot.js not found");
-    return;
-  }
-  server_.streamFile(file, "application/javascript");
-  file.close();
+  server_.sendHeader("Content-Encoding", "gzip");
+  server_.send_P(200, "application/javascript", (const char*)UPLOT_JS_GZ, UPLOT_JS_GZ_LEN);
 }
 
 void WebManager::handleLocalUPlotCss() {
-  if (!ensureSdReady()) {
-    sendJsonError(503, "SD card unavailable");
-    return;
-  }
-  File file = SD.open("/sys/uplot.css", "r");
-  if (!file) {
-    sendJsonError(404, "Asset /sys/uplot.css not found");
-    return;
-  }
-  server_.streamFile(file, "text/css");
-  file.close();
+  server_.sendHeader("Content-Encoding", "gzip");
+  server_.send_P(200, "text/css", (const char*)UPLOT_CSS_GZ, UPLOT_CSS_GZ_LEN);
 }
 
 void WebManager::handleLiveJson() {

@@ -17,3 +17,4 @@ web pages stored currently in code other options: Flash, SPIFFS, or SD card?
 
 sd Card File manipulation. (delete rename download)
 
+display move the battery % to the 4th line with state reporting

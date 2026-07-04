@@ -168,6 +168,9 @@ bool LoggerManager::flush() {
     }
 
     if (!exists) {
+      if (!SD.exists("/logs")) {
+        SD.mkdir("/logs");
+      }
       if (SD.exists(filepath)) {
         SD.remove(filepath);
       }

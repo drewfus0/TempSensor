@@ -272,7 +272,7 @@ void DisplayManager::renderLatest(const Sample& sample,
   // Rotate between timestamp and battery status every 3 seconds
   const uint32_t sec = millis() / 3000;
   if (batteryPercent >= 0 && batteryStatus != nullptr && (sec % 2 == 1)) {
-    char batBuf[16]{};
+    char batBuf[24]{};
     if (strcmp(batteryStatus, "Full") == 0) {
       snprintf(batBuf, sizeof(batBuf), "Bat:Full");
     } else if (strcmp(batteryStatus, "Charging / USB") == 0) {

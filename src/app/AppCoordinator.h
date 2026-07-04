@@ -21,7 +21,6 @@ class AppCoordinator {
   void handleDisplayRefresh(uint32_t nowMs);
   void handleDiagnostics(uint32_t nowMs);
   void refreshHealth(uint32_t nowMs);
-  void provisionWebAssets();
 
   SensorManager sensorManager_;
   TimeManager timeManager_;
