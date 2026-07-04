@@ -17,6 +17,9 @@ class LoggerManager {
   bool flushIfDue(uint32_t nowMs, uint32_t flushIntervalMs);
   bool logEvent(const char* eventName, const char* timestamp, TimestampQuality quality);
 
+  bool forceRetry();
+  bool attemptRecovery();
+
   size_t queueDepth() const { return queue_.size(); }
   size_t queueCapacity() const { return queue_.capacity(); }
   uint32_t droppedSamples() const { return droppedSamples_; }
@@ -35,4 +38,11 @@ class LoggerManager {
   char sdDiagDetail_[96] = "Not initialized";
   uint32_t droppedSamples_ = 0;
   uint32_t lastFlushMs_ = 0;
+
+  int sdCsPin_ = -1;
+  int sckPin_ = -1;
+  int misoPin_ = -1;
+  int mosiPin_ = -1;
+  uint32_t lastSdRetryMs_ = 0;
+  uint32_t sdRetryIntervalMs_ = 15000; // Start with 15s retry interval
 };

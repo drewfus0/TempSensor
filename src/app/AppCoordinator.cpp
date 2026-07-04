@@ -6,6 +6,11 @@
 void AppCoordinator::begin() {
   Serial.println("\n[App] Booting TempSensor milestone-1 firmware...");
 
+  // Drive CS pin HIGH immediately on boot to prevent the SD card from interpreting startup noise
+  pinMode(AppConfig::SD_CS_PIN, OUTPUT);
+  digitalWrite(AppConfig::SD_CS_PIN, HIGH);
+  delay(50); // Let power stabilize
+
   displayManager_.begin(AppConfig::I2C_SDA_PIN, AppConfig::I2C_SCL_PIN);
   displayManager_.showStartupStatus("Boot", "Initializing...");
 

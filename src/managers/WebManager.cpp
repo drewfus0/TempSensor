@@ -115,6 +115,8 @@ void WebManager::handleRoot() {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
   <style>
     :root {
       --bg: #090d16;
@@ -405,31 +407,50 @@ void WebManager::handleRoot() {
       width: 100%;
       height: 250px;
       margin-top: 12px;
-    }
-    canvas {
-      width: 100%;
-      height: 100%;
-      display: block;
       border-radius: 6px;
       background: rgba(0, 0, 0, 0.2);
+      overflow: hidden;
     }
-    .chart-tooltip {
-      position: absolute;
-      background: rgba(9, 13, 22, 0.95);
-      border: 1px solid var(--card-border);
-      border-radius: 6px;
-      padding: 8px 12px;
+    .uplot {
+      position: relative;
       font-family: var(--font-main);
-      font-size: 0.75rem;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.15s ease;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-      z-index: 10;
+      width: 100% !important;
+      height: 100% !important;
     }
-    .tooltip-date { font-weight: 600; color: #fff; margin-bottom: 2px; }
-    .tooltip-val { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
-    .tooltip-q { font-size: 0.65rem; color: var(--text-sub); margin-top: 2px; }
+    .u-legend {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 10;
+      padding: 6px 12px !important;
+      font-size: 0.72rem !important;
+      color: var(--text-sub) !important;
+      background: rgba(21, 27, 43, 0.85) !important;
+      border: 1px solid rgba(255, 255, 255, 0.08) !important;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+    .u-legend.u-inline tr {
+      margin-left: 15px;
+      margin-right: 0;
+    }
+    .u-legend .u-label {
+      color: var(--text-sub) !important;
+      font-weight: 600;
+    }
+    .u-legend .u-value {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--text) !important;
+    }
+    .u-tooltip {
+      background: rgba(9, 13, 22, 0.95) !important;
+      border: 1px solid var(--card-border) !important;
+      border-radius: 6px !important;
+      color: var(--text) !important;
+      font-family: var(--font-main) !important;
+      font-size: 0.72rem !important;
+    }
     
     .scroll-area {
       margin: 0;
@@ -704,14 +725,6 @@ void WebManager::handleRoot() {
           <h2>Historical Chart</h2>
           <div class='controls-grid' style='grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 8px;'>
             <div class='form-group'>
-              <label for='metric'>Metric</label>
-              <select id='metric'>
-                <option value='temp_c'>Temperature</option>
-                <option value='humidity_pct'>Humidity</option>
-                <option value='pressure_hpa'>Pressure</option>
-              </select>
-            </div>
-            <div class='form-group'>
               <label for='range'>Range</label>
               <select id='range'>
                 <option value='15m'>Last 15m</option>
@@ -720,10 +733,6 @@ void WebManager::handleRoot() {
                 <option value='24h'>Last 24h</option>
                 <option value='custom'>Custom</option>
               </select>
-            </div>
-            <div class='form-group'>
-              <label for='maxPoints'>Max Points</label>
-              <input id='maxPoints' type='number' min='20' max='1000' value='300'>
             </div>
           </div>
           
@@ -745,13 +754,8 @@ void WebManager::handleRoot() {
           
           <div class='alert-banner' id='historyAlert' style='margin-bottom: 10px;'></div>
 
-          <div class='chart-container'>
-            <canvas id='chart'></canvas>
-            <div class='chart-tooltip' id='tooltip'>
-              <div class='tooltip-date' id='tooltipDate'></div>
-              <div class='tooltip-val' id='tooltipVal'></div>
-              <div class='tooltip-q' id='tooltipQ'></div>
-            </div>
+          <div class='chart-container' id='chart-parent'>
+            <div id='chart'></div>
           </div>
           <div class='live-meta' id='historyMeta' style='margin-top: 12px; text-align: left;'>
             No history data loaded.
@@ -789,14 +793,11 @@ void WebManager::handleRoot() {
   <script>
     const $ = (id) => document.getElementById(id);
     
-    let chartPoints = [];
+    let uplotInstance = null;
     let historyLoaded = false;
-    let minVal = 0;
-    let maxVal = 1;
-    let hoveredPoint = null;
+    let historyDataset = [];
     let lastLive = null;
     let lastHealth = null;
-    let historyDataset = [];
 
     async function fetchJson(url) {
       const res = await fetch(url, { cache: 'no-store' });
@@ -847,219 +848,162 @@ void WebManager::handleRoot() {
     }
 
     function renderChart() {
-      const canvas = $('chart');
-      const ctx = canvas.getContext('2d');
-      const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      ctx.scale(dpr, dpr);
-      
-      const w = rect.width;
-      const h = rect.height;
+      const container = $('chart-parent');
+      const target = $('chart');
+      const rect = container.getBoundingClientRect();
 
-      ctx.clearRect(0, 0, w, h);
-
-      const padL = 50;
-      const padR = 15;
-      const padT = 20;
-      const padB = 30;
-      const gw = w - padL - padR;
-      const gh = h - padT - padB;
-
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-      ctx.lineWidth = 1;
-      for (let i = 0; i <= 4; i++) {
-        const y = padT + (gh * i / 4);
-        ctx.beginPath();
-        ctx.moveTo(padL, y);
-        ctx.lineTo(w - padR, y);
-        ctx.stroke();
+      if (uplotInstance) {
+        uplotInstance.destroy();
+        uplotInstance = null;
       }
 
-      if (chartPoints.length === 0) {
-        ctx.fillStyle = 'var(--text-sub)';
-        ctx.font = '13px var(--font-main)';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(historyLoaded ? 'No history data in this range.' : 'Select a range and load history to display chart.', padL + gw / 2, padT + gh / 2);
+      if (!historyDataset || historyDataset.length === 0) {
+        target.innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 250px; font-size: 13px;">${historyLoaded ? 'No history data in this range.' : 'Select a range and load history to display chart.'}</div>`;
         return;
       }
 
-      minVal = Number.POSITIVE_INFINITY;
-      maxVal = Number.NEGATIVE_INFINITY;
-      for (const p of chartPoints) {
-        const val = parseFloat(p.v);
-        if (!isNaN(val)) {
-          if (val < minVal) minVal = val;
-          if (val > maxVal) maxVal = val;
+      const xData = [];
+      const tempYData = [];
+      const humYData = [];
+      const presYData = [];
+
+      for (let i = 0; i < historyDataset.length; i++) {
+        const pt = historyDataset[i];
+        const epochSec = Date.parse(pt.ts.replace(' ', 'T')) / 1000;
+        if (!isNaN(epochSec)) {
+          xData.push(epochSec);
+          tempYData.push(parseFloat(pt.temp));
+          humYData.push(parseFloat(pt.hum));
+          presYData.push(parseFloat(pt.pres));
         }
       }
 
-      if (minVal === Number.POSITIVE_INFINITY || isNaN(minVal)) {
-        minVal = 0; maxVal = 100;
-      }
-      if (maxVal === minVal) {
-        maxVal = minVal + 1;
+      if (xData.length === 0) {
+        target.innerHTML = '<div style="color: var(--text-sub); text-align: center; line-height: 250px; font-size: 13px;">No parseable history data.</div>';
+        return;
       }
 
-      const diff = maxVal - minVal;
-      minVal -= diff * 0.05;
-      maxVal += diff * 0.05;
+      const data = [xData, tempYData, humYData, presYData];
 
-      const metric = $('metric').value;
-      let strokeColor = '#06b6d4';
-      let fillColor1 = 'rgba(6, 182, 212, 0.25)';
-      let fillColor2 = 'rgba(6, 182, 212, 0)';
-      let suffix = '';
-      if (metric === 'temp_c') {
-        strokeColor = '#f43f5e';
-        fillColor1 = 'rgba(244, 63, 94, 0.25)';
-        fillColor2 = 'rgba(244, 63, 94, 0)';
-        suffix = ' °C';
-      } else if (metric === 'humidity_pct') {
-        strokeColor = '#06b6d4';
-        fillColor1 = 'rgba(6, 182, 212, 0.25)';
-        fillColor2 = 'rgba(6, 182, 212, 0)';
-        suffix = ' %';
-      } else if (metric === 'pressure_hpa') {
-        strokeColor = '#10b981';
-        fillColor1 = 'rgba(16, 185, 129, 0.25)';
-        fillColor2 = 'rgba(16, 185, 129, 0)';
-        suffix = ' hPa';
-      }
+      const opts = {
+        width: rect.width,
+        height: 250,
+        title: "",
+        class: "uplot-theme",
+        cursor: {
+          show: true
+        },
+        select: {
+          show: true,
+          over: true,
+        },
+        scales: {
+          x: {
+            time: true,
+          },
+          temp: {
+            auto: true,
+          },
+          humidity: {
+            auto: true,
+            range: [0, 100],
+          },
+          pressure: {
+            auto: true,
+          }
+        },
+        series: [
+          {},
+          {
+            show: true,
+            scale: 'temp',
+            spanGaps: false,
+            label: 'Temperature',
+            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' °C' : '--',
+            stroke: '#f43f5e',
+            width: 2,
+            fill: 'rgba(244, 63, 94, 0.04)',
+          },
+          {
+            show: true,
+            scale: 'humidity',
+            spanGaps: false,
+            label: 'Humidity',
+            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' %' : '--',
+            stroke: '#06b6d4',
+            width: 2,
+            fill: 'rgba(6, 182, 212, 0.04)',
+          },
+          {
+            show: true,
+            scale: 'pressure',
+            spanGaps: false,
+            label: 'Pressure',
+            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(1) + ' hPa' : '--',
+            stroke: '#10b981',
+            width: 2,
+            fill: 'rgba(16, 185, 129, 0.04)',
+          }
+        ],
+        axes: [
+          {
+            stroke: "rgba(255, 255, 255, 0.5)",
+            grid: {
+              show: true,
+              stroke: "rgba(255, 255, 255, 0.05)",
+              width: 1,
+            },
+            ticks: {
+              show: true,
+              stroke: "rgba(255, 255, 255, 0.1)",
+              width: 1,
+            },
+            space: 60,
+          },
+          {
+            scale: 'temp',
+            side: 3,
+            stroke: "rgba(255, 255, 255, 0.5)",
+            grid: {
+              show: true,
+              stroke: "rgba(255, 255, 255, 0.05)",
+              width: 1,
+            },
+            ticks: {
+              show: true,
+              stroke: "rgba(255, 255, 255, 0.1)",
+              width: 1,
+            },
+            space: 30,
+          },
+          {
+            scale: 'humidity',
+            side: 1,
+            stroke: "rgba(255, 255, 255, 0.5)",
+            grid: {
+              show: false,
+            },
+            ticks: {
+              show: true,
+              stroke: "rgba(255, 255, 255, 0.1)",
+              width: 1,
+            },
+            space: 30,
+          }
+        ]
+      };
 
-      const getX = (index) => padL + (chartPoints.length <= 1 ? 0.5 : (index / (chartPoints.length - 1))) * gw;
-      const getY = (val) => padT + gh - ((val - minVal) / (maxVal - minVal)) * gh;
-
-      const grad = ctx.createLinearGradient(0, padT, 0, padT + gh);
-      grad.addColorStop(0, fillColor1);
-      grad.addColorStop(1, fillColor2);
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.moveTo(getX(0), padT + gh);
-      for (let i = 0; i < chartPoints.length; i++) {
-        ctx.lineTo(getX(i), getY(chartPoints[i].v));
-      }
-      ctx.lineTo(getX(chartPoints.length - 1), padT + gh);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 2.5;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(getX(0), getY(chartPoints[0].v));
-      for (let i = 1; i < chartPoints.length; i++) {
-        ctx.lineTo(getX(i), getY(chartPoints[i].v));
-      }
-      ctx.stroke();
-
-      ctx.fillStyle = 'var(--text-sub)';
-      ctx.font = '10px var(--font-mono)';
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(maxVal.toFixed(1) + suffix, padL - 8, padT);
-      ctx.fillText(((maxVal + minVal) / 2).toFixed(1) + suffix, padL - 8, padT + gh / 2);
-      ctx.fillText(minVal.toFixed(1) + suffix, padL - 8, padT + gh);
-
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.font = '10px var(--font-mono)';
-      
-      const startT = chartPoints[0].ts.split(' ').slice(1).join(' ') || chartPoints[0].ts;
-      const endT = chartPoints[chartPoints.length - 1].ts.split(' ').slice(1).join(' ') || chartPoints[chartPoints.length - 1].ts;
-      ctx.fillText(startT, padL, padT + gh + 6);
-      
-      ctx.textAlign = 'right';
-      ctx.fillText(endT, w - padR, padT + gh + 6);
-
-      if (hoveredPoint !== null) {
-        const i = hoveredPoint.index;
-        const x = getX(i);
-        const y = getY(hoveredPoint.v);
-
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(x, padT);
-        ctx.lineTo(x, padT + gh);
-        ctx.stroke();
-
-        ctx.fillStyle = strokeColor;
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(x, y, 6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      }
+      target.innerHTML = '';
+      uplotInstance = new uPlot(opts, data, target);
     }
 
-    $('chart').addEventListener('mousemove', (e) => {
-      if (chartPoints.length === 0) return;
-      const canvas = $('chart');
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-
-      const padL = 50;
-      const padR = 15;
-      const gw = rect.width - padL - padR;
-
-      let nearestIndex = 0;
-      let minDist = Number.POSITIVE_INFINITY;
-      for (let i = 0; i < chartPoints.length; i++) {
-        const x = padL + (chartPoints.length <= 1 ? 0.5 : (i / (chartPoints.length - 1))) * gw;
-        const dist = Math.abs(x - mouseX);
-        if (dist < minDist) {
-          minDist = dist;
-          nearestIndex = i;
-        }
-      }
-
-      if (minDist < 40) {
-        const pt = chartPoints[nearestIndex];
-        hoveredPoint = {
-          index: nearestIndex,
-          v: pt.v,
-          ts: pt.ts,
-          q: pt.q
-        };
-        renderChart();
-
-        const tooltip = $('tooltip');
-        const metric = $('metric').value;
-        let suffix = '';
-        if (metric === 'temp_c') suffix = ' °C';
-        else if (metric === 'humidity_pct') suffix = ' %';
-        else if (metric === 'pressure_hpa') suffix = ' hPa';
-
-        $('tooltipDate').textContent = pt.ts;
-        $('tooltipVal').textContent = parseFloat(pt.v).toFixed(2) + suffix;
-        $('tooltipQ').textContent = 'Quality: ' + (pt.q === 'n' || pt.q === 'ntp' ? 'NTP' : 'Estimated');
-        
-        const xPos = padL + (chartPoints.length <= 1 ? 0.5 : (nearestIndex / (chartPoints.length - 1))) * gw;
-        
-        tooltip.style.left = (xPos + 10) + 'px';
-        tooltip.style.top = (mouseY - 60) + 'px';
-        tooltip.style.opacity = 1;
-      } else {
-        hoveredPoint = null;
-        renderChart();
-        $('tooltip').style.opacity = 0;
+    window.addEventListener('resize', () => {
+      if (uplotInstance) {
+        const container = $('chart-parent');
+        const rect = container.getBoundingClientRect();
+        uplotInstance.setSize({ width: rect.width, height: 250 });
       }
     });
-
-    $('chart').addEventListener('mouseleave', () => {
-      hoveredPoint = null;
-      renderChart();
-      $('tooltip').style.opacity = 0;
-    });
-
-    window.addEventListener('resize', renderChart);
 
     function validateDateRange(startStr, endStr) {
       if (!startStr || !endStr) return "Both start and end date-times are required.";
@@ -1123,9 +1067,6 @@ void WebManager::handleRoot() {
         end = fmtLocalTs(now);
       }
 
-      const metric = $('metric').value;
-      const maxPoints = Math.max(20, Math.min(1000, Number($('maxPoints').value || 300)));
-
       try {
         setText('historyMeta', 'Loading history...');
         updateModalProgress(20, 'Requesting binary log...');
@@ -1165,16 +1106,10 @@ void WebManager::handleRoot() {
 
           const recTime = new Date(baseTime + i * intervalMs);
           const recTs = fmtLocalTs(recTime);
-          
-          let val = 0;
-          if (metric === 'temp_c') val = temp;
-          else if (metric === 'humidity_pct') val = hum;
-          else if (metric === 'pressure_hpa') val = pres;
 
           allPoints.push({
             ts: recTs,
             q: quality === 0 ? 'ntp' : 'estimated',
-            v: val,
             temp: temp,
             hum: hum,
             pres: pres,
@@ -1182,29 +1117,20 @@ void WebManager::handleRoot() {
           });
         }
 
-        updateModalProgress(80, 'Downsampling chart points...');
-
-        const stride = (allPoints.length > maxPoints) ? Math.ceil(allPoints.length / maxPoints) : 1;
-        
-        chartPoints = [];
-        for (let i = 0; i < allPoints.length; i += stride) {
-          chartPoints.push(allPoints[i]);
-        }
+        updateModalProgress(80, 'Preparing chart dataset...');
 
         historyLoaded = true;
+        historyDataset = allPoints;
         renderChart();
 
         setText('historyMeta',
-          'Metric: ' + metric +
-          ' | Total Logged: ' + allPoints.length +
-          ' | Downsampled: ' + chartPoints.length);
-
-        historyDataset = allPoints;
+          'Total Logged: ' + allPoints.length +
+          ' | Rendered: ' + historyDataset.length);
 
         updateModalProgress(100, 'Done!');
         await new Promise(resolve => setTimeout(resolve, 250));
       } catch (err) {
-        chartPoints = [];
+        historyDataset = [];
         historyLoaded = true;
         renderChart();
         setText('historyMeta', 'History error: ' + err.message);
@@ -1552,8 +1478,12 @@ void WebManager::handleHealthJson() {
 }
 
 bool WebManager::ensureSdReady() {
-  if (health_ != nullptr && !health_->sdHealthy) {
-    return false;
+  if (loggerManager_ != nullptr) {
+    if (loggerManager_->isSdHealthy()) {
+      return true;
+    }
+    // Try a manual forced recovery retry immediately
+    return loggerManager_->forceRetry();
   }
   return SD.begin(AppConfig::SD_CS_PIN);
 }

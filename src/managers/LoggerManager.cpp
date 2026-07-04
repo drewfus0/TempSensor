@@ -3,6 +3,11 @@
 #include "config/AppConfig.h"
 
 bool LoggerManager::begin(int sdCsPin, int sckPin, int misoPin, int mosiPin) {
+  sdCsPin_ = sdCsPin;
+  sckPin_ = sckPin;
+  misoPin_ = misoPin;
+  mosiPin_ = mosiPin;
+
   (void)sckPin;
   (void)misoPin;
   (void)mosiPin;
@@ -16,8 +21,8 @@ bool LoggerManager::begin(int sdCsPin, int sckPin, int misoPin, int mosiPin) {
   }
 
   if (!ensurePathsAndHeaders()) {
-    snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "FS/header setup failed (format?)");
-    Serial.printf("[Logger] SD post-init error: %s\n", sdDiagDetail_);
+    snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "FS write failure (read-only/corrupt?)");
+    Serial.printf("[Logger] SD post-init error: %s (Check write-protect switch, card format, or capacity)\n", sdDiagDetail_);
     sdHealthy_ = false;
     return false;
   }
@@ -34,6 +39,21 @@ bool LoggerManager::enqueueSample(const Sample& sample) {
 }
 
 bool LoggerManager::flushIfDue(uint32_t nowMs, uint32_t flushIntervalMs) {
+  if (!sdHealthy_ && sdCsPin_ != -1) {
+    if (nowMs - lastSdRetryMs_ >= sdRetryIntervalMs_) {
+      lastSdRetryMs_ = nowMs;
+      Serial.printf("[Logger] SD card unhealthy. Periodic retry attempt... (interval: %ds, queue: %d/%d)\n",
+                    sdRetryIntervalMs_ / 1000, queue_.size(), queue_.capacity());
+
+      if (attemptRecovery()) {
+        sdRetryIntervalMs_ = 15000; // Reset retry interval on success
+      } else {
+        // Exponential backoff capped at 5 minutes
+        sdRetryIntervalMs_ = min(sdRetryIntervalMs_ * 2, (uint32_t)300000);
+      }
+    }
+  }
+
   if ((nowMs - lastFlushMs_) < flushIntervalMs) {
     return true;
   }
@@ -134,22 +154,18 @@ bool LoggerManager::flush() {
     String filepath = "/logs/" + String(dateStr) + ".bin";
     File file;
     bool exists = SD.exists(filepath);
-    size_t foundSize = 0;
     if (exists) {
       File checkFile = SD.open(filepath, "r");
       if (checkFile) {
-        foundSize = checkFile.size();
+        size_t foundSize = checkFile.size();
         if (foundSize != 86400 * sizeof(LogRecord)) {
           exists = false;
         }
         checkFile.close();
       } else {
-        Serial.printf("[Logger] Check open failed for %s\n", filepath.c_str());
         exists = false;
       }
     }
-
-    Serial.printf("[Logger] File %s exists=%d size=%d\n", filepath.c_str(), exists, foundSize);
 
     if (!exists) {
       if (SD.exists(filepath)) {
@@ -157,7 +173,6 @@ bool LoggerManager::flush() {
       }
       file = SD.open(filepath, "w+"); // Open in read/write/create mode
       if (file) {
-        Serial.printf("[Logger] Starting pre-allocation for %s\n", filepath.c_str());
         bool success = preAllocateDailyFile(file);
         if (!success) {
           Serial.printf("[Logger] Failed to pre-allocate binary file %s\n", filepath.c_str());
@@ -167,7 +182,6 @@ bool LoggerManager::flush() {
           sdHealthy_ = false;
           break;
         }
-        Serial.printf("[Logger] Pre-allocation successful for %s\n", filepath.c_str());
       }
     } else {
       file = SD.open(filepath, "r+"); // Open for random write
@@ -234,23 +248,42 @@ bool LoggerManager::logEvent(const char* eventName, const char* timestamp, Times
 }
 
 bool LoggerManager::initSdWithRetries(int sdCsPin) {
+  // Explicitly configure CS pin as output and hold HIGH to deselect card
+  pinMode(sdCsPin, OUTPUT);
+  digitalWrite(sdCsPin, HIGH);
+  delay(50);
+
+  // Cycle CS pin to reset the SD card's internal SPI controller
+  digitalWrite(sdCsPin, LOW);
+  delay(10);
+  digitalWrite(sdCsPin, HIGH);
+  delay(50);
+
+  Serial.printf("[Logger] Testing SD.begin on CS pin %d...\n", sdCsPin);
+
   if (SD.begin(sdCsPin)) {
     snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "Init @ default speed");
+    Serial.println("[Logger] SD card mounted successfully at default speed.");
     return true;
   }
 
+  Serial.println("[Logger] SD.begin failed at default speed. Trying half speed...");
   delay(100);
   if (SD.begin(sdCsPin, SPI_HALF_SPEED)) {
     snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "Init @ half speed");
+    Serial.println("[Logger] SD card mounted successfully at half speed.");
     return true;
   }
 
+  Serial.println("[Logger] SD.begin failed at half speed. Trying quarter speed...");
   delay(100);
   if (SD.begin(sdCsPin, SPI_QUARTER_SPEED)) {
     snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "Init @ quarter speed");
+    Serial.println("[Logger] SD card mounted successfully at quarter speed.");
     return true;
   }
 
+  Serial.println("[Logger] SD.begin failed at all speeds. Verify wiring (CS pad to GPIO15 jumper), card insertion, and FAT32 format.");
   snprintf(sdDiagDetail_, sizeof(sdDiagDetail_), "No card / wiring / format issue");
   return false;
 }
@@ -298,4 +331,32 @@ bool LoggerManager::writeEventHeaderIfMissing() {
   const int written = file.println("timestamp,timestamp_quality,event");
   file.close();
   return written > 0;
+}
+
+bool LoggerManager::forceRetry() {
+  if (sdHealthy_) {
+    return true;
+  }
+
+  Serial.println("[Logger] Forced SD card retry requested...");
+  return attemptRecovery();
+}
+
+bool LoggerManager::attemptRecovery() {
+  if (sdCsPin_ == -1) {
+    return false;
+  }
+
+  // Release any lockups/half-states in filesystem
+  SD.end();
+  delay(50);
+
+  if (begin(sdCsPin_, sckPin_, misoPin_, mosiPin_)) {
+    Serial.println("[Logger] SD card recovered and mounted!");
+    // Flush pending queue immediately on recovery
+    flush();
+    return true;
+  }
+
+  return false;
 }
