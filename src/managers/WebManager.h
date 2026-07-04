@@ -17,6 +17,12 @@ class WebManager {
   void setLatestSample(const Sample* sample) { latestSample_ = sample; }
   void setHealth(const SystemHealth* health) { health_ = health; }
 
+  using YieldCallback = void (*)(void* arg);
+  void registerYieldCallback(YieldCallback cb, void* arg) {
+    yieldCallback_ = cb;
+    yieldCallbackArg_ = arg;
+  }
+
  private:
   void registerRoutes();
   void handleRoot();
@@ -47,4 +53,6 @@ class WebManager {
   const SystemHealth* health_ = nullptr;
   LoggerManager* loggerManager_ = nullptr;
   TimeManager* timeManager_ = nullptr;
+  YieldCallback yieldCallback_ = nullptr;
+  void* yieldCallbackArg_ = nullptr;
 };

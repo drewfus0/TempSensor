@@ -26,6 +26,11 @@ void AppCoordinator::begin() {
   displayManager_.showStartupStatus("SD", sdOk ? "Ready" : "Init failed", loggerManager_.getSdDiagDetail(), !sdOk);
 
   webManager_.begin(AppConfig::WIFI_SSID, AppConfig::WIFI_PASSWORD, AppConfig::HOSTNAME, &loggerManager_, &timeManager_);
+  webManager_.registerYieldCallback([](void* arg) {
+    auto* self = static_cast<AppCoordinator*>(arg);
+    self->handleSampling(millis());
+  }, this);
+
   const bool wifiConnected = (WiFi.status() == WL_CONNECTED);
   String wifiDetail = wifiConnected ? WiFi.localIP().toString() : String("Offline mode");
   displayManager_.showStartupStatus("WiFi", wifiConnected ? "Connected" : "Not connected", wifiDetail.c_str());

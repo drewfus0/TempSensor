@@ -1046,15 +1046,15 @@ void WebManager::handleRoot() {
       modal.classList.add('active');
       updateModalProgress(0, 'Initializing data request...');
 
-      let start = '';
-      let end = '';
+      let startDate = null;
+      let endDate = null;
       const range = $('range').value;
       const now = new Date();
       if (range === 'custom') {
         const s = $('start').value;
         const e = $('end').value;
-        if (s) start = s.replace('T', ' ') + ':00';
-        if (e) end = e.replace('T', ' ') + ':00';
+        if (s) startDate = new Date(s.replace('T', ' ') + ':00');
+        if (e) endDate = new Date(e.replace('T', ' ') + ':00');
       } else {
         const mins = {
           '15m': 15,
@@ -1062,62 +1062,86 @@ void WebManager::handleRoot() {
           '6h': 360,
           '24h': 1440
         }[range] || 60;
-        const startDate = new Date(now.getTime() - mins * 60000);
-        start = fmtLocalTs(startDate);
-        end = fmtLocalTs(now);
+        startDate = new Date(now.getTime() - mins * 60000);
+        endDate = now;
       }
 
+      if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        alert.textContent = "Invalid date range selected.";
+        alert.className = 'alert-banner error';
+        alert.style.display = 'block';
+        modal.classList.remove('active');
+        isLoadingHistory = false;
+        return;
+      }
+
+      const chunkMs = 4 * 3600 * 1000; // 4 hours in milliseconds
+      const totalMs = endDate.getTime() - startDate.getTime();
+      const numChunks = Math.ceil(totalMs / chunkMs);
+      
+      let allPoints = [];
+
       try {
-        setText('historyMeta', 'Loading history...');
-        updateModalProgress(20, 'Requesting binary log...');
+        setText('historyMeta', 'Initializing chunked download...');
         
-        const url = '/api/history?start=' + encodeURIComponent(start) + '&end=' + encodeURIComponent(end);
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) {
-          throw new Error('HTTP status ' + res.status);
-        }
-
-        updateModalProgress(40, 'Downloading binary data...');
-        const startTimestampStr = res.headers.get('X-Start-Timestamp') || start;
-        const intervalMs = parseInt(res.headers.get('X-Sample-Interval-Ms') || '1000');
-        const recordSize = parseInt(res.headers.get('X-Record-Size') || '17');
-
-        const arrayBuffer = await res.arrayBuffer();
-        updateModalProgress(60, 'Parsing binary records...');
-        
-        const view = new DataView(arrayBuffer);
-        const totalRecords = arrayBuffer.byteLength / recordSize;
-        const baseTime = new Date(startTimestampStr.replace(' ', 'T')).getTime();
-        
-        let allPoints = [];
-        
-        for (let i = 0; i < totalRecords; i++) {
-          const offset = i * recordSize;
+        for (let i = 0; i < numChunks; i++) {
+          const chunkStart = new Date(startDate.getTime() + i * chunkMs);
+          const chunkEnd = new Date(Math.min(startDate.getTime() + (i + 1) * chunkMs - 1000, endDate.getTime()));
           
-          const uptime = view.getUint32(offset + 0, true);
-          const temp = view.getFloat32(offset + 4, true);
-          const hum = view.getFloat32(offset + 8, true);
-          const pres = view.getFloat32(offset + 12, true);
-          const quality = view.getUint8(offset + 16);
-
-          if (quality === 2) {
-            continue; // Empty/unwritten slot
+          const startStr = fmtLocalTs(chunkStart);
+          const endStr = fmtLocalTs(chunkEnd);
+          
+          updateModalProgress(
+            (i / numChunks) * 80 + 10,
+            `Downloading chunk ${i + 1}/${numChunks} (${Math.round((i / numChunks) * 100)}%)...`
+          );
+          
+          const url = '/api/history?start=' + encodeURIComponent(startStr) + '&end=' + encodeURIComponent(endStr);
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) {
+            throw new Error(`HTTP status ${res.status} on chunk ${i + 1}`);
           }
+          
+          const startTimestampStr = res.headers.get('X-Start-Timestamp') || startStr;
+          const intervalMs = parseInt(res.headers.get('X-Sample-Interval-Ms') || '1000');
+          const recordSize = parseInt(res.headers.get('X-Record-Size') || '17');
 
-          const recTime = new Date(baseTime + i * intervalMs);
-          const recTs = fmtLocalTs(recTime);
+          const arrayBuffer = await res.arrayBuffer();
+          const view = new DataView(arrayBuffer);
+          const totalRecords = arrayBuffer.byteLength / recordSize;
+          const baseTime = new Date(startTimestampStr.replace(' ', 'T')).getTime();
+          
+          for (let r = 0; r < totalRecords; r++) {
+            const offset = r * recordSize;
+            
+            const uptime = view.getUint32(offset + 0, true);
+            const temp = view.getFloat32(offset + 4, true);
+            const hum = view.getFloat32(offset + 8, true);
+            const pres = view.getFloat32(offset + 12, true);
+            const quality = view.getUint8(offset + 16);
 
-          allPoints.push({
-            ts: recTs,
-            q: quality === 0 ? 'ntp' : 'estimated',
-            temp: temp,
-            hum: hum,
-            pres: pres,
-            uptime: uptime
-          });
+            if (quality === 2) {
+              continue; // Empty/unwritten slot
+            }
+
+            const recTime = new Date(baseTime + r * intervalMs);
+            const recTs = fmtLocalTs(recTime);
+
+            allPoints.push({
+              ts: recTs,
+              q: quality === 0 ? 'ntp' : 'estimated',
+              temp: temp,
+              hum: hum,
+              pres: pres,
+              uptime: uptime
+            });
+          }
+          
+          // Yield to give ESP8266 CPU time for background tasks
+          await new Promise(resolve => setTimeout(resolve, 50));
         }
 
-        updateModalProgress(80, 'Preparing chart dataset...');
+        updateModalProgress(90, 'Preparing chart dataset...');
 
         historyLoaded = true;
         historyDataset = allPoints;
@@ -1656,6 +1680,11 @@ void WebManager::streamEventsJson(File& file, const String& startTs, const Strin
     String item = "{\"ts\":\"" + ts + "\",\"q\":\"" + quality + "\",\"event\":\"" + eventName + "\"}";
     server_.sendContent(item);
     ++emitted;
+    
+    if (yieldCallback_) {
+      yieldCallback_(yieldCallbackArg_);
+    }
+
     if (emitted >= limit) {
       break;
     }
@@ -1744,6 +1773,10 @@ void WebManager::handleHistoryJson() {
         server_.client().write(buffer, chunkSlots * sizeof(LogRecord));
         slotsLeft -= chunkSlots;
         recordsToRead -= chunkSlots;
+
+        if (yieldCallback_) {
+          yieldCallback_(yieldCallbackArg_);
+        }
       }
     } else {
       file.seek(currentSlot * sizeof(LogRecord));
@@ -1771,6 +1804,10 @@ void WebManager::handleHistoryJson() {
         server_.client().write(buffer, bytesToRead);
         slotsLeft -= chunkSlots;
         recordsToRead -= chunkSlots;
+
+        if (yieldCallback_) {
+          yieldCallback_(yieldCallbackArg_);
+        }
       }
       file.close();
     }
