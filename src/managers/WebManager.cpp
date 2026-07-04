@@ -1774,8 +1774,7 @@ void WebManager::handleHistoryJson() {
 
   uint32_t totalBytes = totalRecords * sizeof(LogRecord);
 
-  server_.sendHeader("Content-Type", "application/octet-stream");
-  server_.sendHeader("Content-Length", String(totalBytes));
+  server_.setContentLength(totalBytes);
   server_.sendHeader("X-Start-Timestamp", startTs);
   server_.sendHeader("X-Sample-Interval-Ms", "1000");
   server_.sendHeader("X-Record-Size", String(sizeof(LogRecord)));
