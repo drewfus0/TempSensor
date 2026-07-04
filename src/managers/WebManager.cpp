@@ -405,7 +405,7 @@ void WebManager::handleRoot() {
     .chart-container {
       position: relative;
       width: 100%;
-      height: 250px;
+      height: 500px;
       margin-top: 12px;
       border-radius: 6px;
       background: rgba(0, 0, 0, 0.2);
@@ -858,7 +858,7 @@ void WebManager::handleRoot() {
       }
 
       if (!historyDataset || historyDataset.length === 0) {
-        target.innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 250px; font-size: 13px;">${historyLoaded ? 'No history data in this range.' : 'Select a range and load history to display chart.'}</div>`;
+        target.innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 500px; font-size: 13px;">${historyLoaded ? 'No history data in this range.' : 'Select a range and load history to display chart.'}</div>`;
         return;
       }
 
@@ -879,7 +879,7 @@ void WebManager::handleRoot() {
       }
 
       if (xData.length === 0) {
-        target.innerHTML = '<div style="color: var(--text-sub); text-align: center; line-height: 250px; font-size: 13px;">No parseable history data.</div>';
+        target.innerHTML = '<div style="color: var(--text-sub); text-align: center; line-height: 500px; font-size: 13px;">No parseable history data.</div>';
         return;
       }
 
@@ -887,7 +887,7 @@ void WebManager::handleRoot() {
 
       const opts = {
         width: rect.width,
-        height: 250,
+        height: 500,
         title: "",
         class: "uplot-theme",
         cursor: {
@@ -1001,7 +1001,7 @@ void WebManager::handleRoot() {
       if (uplotInstance) {
         const container = $('chart-parent');
         const rect = container.getBoundingClientRect();
-        uplotInstance.setSize({ width: rect.width, height: 250 });
+        uplotInstance.setSize({ width: rect.width, height: 500 });
       }
     });
 
