@@ -51,13 +51,6 @@ bool LoggerManager::flush() {
     return false;
   }
 
-  File file = SD.open(AppConfig::LOG_FILE_PATH, "a");
-  if (!file) {
-    sdHealthy_ = false;
-    Serial.println("[Logger] Failed to open CSV for append");
-    return false;
-  }
-
   bool allWritten = true;
   while (!queue_.empty()) {
     Sample sample;
@@ -65,26 +58,95 @@ bool LoggerManager::flush() {
       break;
     }
 
-    const int written = file.printf("%s,%s,%.2f,%.2f,%.2f,%lu\n",
-                                    sample.timestamp,
-                                    TimestampQualityToString(sample.quality),
-                                    sample.temperatureC,
-                                    sample.humidityPct,
-                                    sample.pressureHpa,
-                                    static_cast<unsigned long>(sample.uptimeSeconds));
-    if (written <= 0) {
+    bool valid = (strlen(sample.timestamp) >= 19 &&
+                  sample.timestamp[4] == '-' &&
+                  sample.timestamp[7] == '-' &&
+                  sample.timestamp[10] == ' ' &&
+                  sample.timestamp[13] == ':' &&
+                  sample.timestamp[16] == ':');
+
+    if (valid) {
+      for (int i = 0; i < 19; ++i) {
+        if (i == 4 || i == 7 || i == 10 || i == 13 || i == 16) continue;
+        if (sample.timestamp[i] < '0' || sample.timestamp[i] > '9') {
+          valid = false;
+          break;
+        }
+      }
+    }
+
+    if (!valid) {
+      // Estimated / offline log format: append sequentially to estimated.bin
+      File estFile = SD.open("/logs/estimated.bin", "a");
+      if (estFile) {
+        LogRecord record;
+        record.uptimeSeconds = sample.uptimeSeconds;
+        record.temperatureC = sample.temperatureC;
+        record.humidityPct = sample.humidityPct;
+        record.pressureHpa = sample.pressureHpa;
+        record.quality = static_cast<uint8_t>(sample.quality);
+        estFile.write(reinterpret_cast<const uint8_t*>(&record), sizeof(LogRecord));
+        estFile.close();
+      }
+      Sample unused;
+      queue_.pop(unused);
+      continue;
+    }
+
+    char dateStr[11];
+    strncpy(dateStr, sample.timestamp, 10);
+    dateStr[10] = '\0';
+
+    int hour = (sample.timestamp[11] - '0') * 10 + (sample.timestamp[12] - '0');
+    int minute = (sample.timestamp[14] - '0') * 10 + (sample.timestamp[15] - '0');
+    int second = (sample.timestamp[17] - '0') * 10 + (sample.timestamp[18] - '0');
+    uint32_t slotIndex = hour * 3600 + minute * 60 + second;
+
+    if (slotIndex >= 86400) {
+      Sample unused;
+      queue_.pop(unused);
+      continue;
+    }
+
+    String filepath = "/logs/" + String(dateStr) + ".bin";
+    File file;
+    if (!SD.exists(filepath)) {
+      file = SD.open(filepath, "w"); // Create file
+    } else {
+      file = SD.open(filepath, "r+"); // Open for random write
+    }
+
+    if (!file) {
       allWritten = false;
       sdHealthy_ = false;
-      Serial.println("[Logger] CSV write failed, retry on next flush");
+      Serial.printf("[Logger] Failed to open binary file %s\n", filepath.c_str());
       break;
     }
 
+    LogRecord record;
+    record.uptimeSeconds = sample.uptimeSeconds;
+    record.temperatureC = sample.temperatureC;
+    record.humidityPct = sample.humidityPct;
+    record.pressureHpa = sample.pressureHpa;
+    record.quality = static_cast<uint8_t>(sample.quality);
+
+    uint32_t byteOffset = slotIndex * sizeof(LogRecord);
+    file.seek(byteOffset);
+    size_t written = file.write(reinterpret_cast<const uint8_t*>(&record), sizeof(LogRecord));
+
+    if (written < sizeof(LogRecord)) {
+      allWritten = false;
+      sdHealthy_ = false;
+      Serial.println("[Logger] Binary write failed, retry on next flush");
+      file.close();
+      break;
+    }
+
+    file.close();
     Sample unused;
     queue_.pop(unused);
   }
 
-  file.flush();
-  file.close();
   return allWritten;
 }
 
@@ -141,7 +203,7 @@ bool LoggerManager::ensurePathsAndHeaders() {
     Serial.println("[Logger] Failed to create /logs directory");
     return false;
   }
-  return writeCsvHeaderIfMissing() && writeEventHeaderIfMissing();
+  return writeEventHeaderIfMissing();
 }
 
 bool LoggerManager::ensureDir(const char* path) {

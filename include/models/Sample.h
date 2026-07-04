@@ -19,3 +19,11 @@ struct Sample {
 inline const char* TimestampQualityToString(TimestampQuality quality) {
   return (quality == TimestampQuality::Ntp) ? "ntp" : "estimated";
 }
+
+struct __attribute__((packed)) LogRecord {
+  uint32_t uptimeSeconds;
+  float temperatureC;
+  float humidityPct;
+  float pressureHpa;
+  uint8_t quality; // 0 = NTP, 1 = Estimated, 2 = Empty/Invalid
+};

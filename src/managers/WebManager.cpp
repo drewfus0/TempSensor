@@ -54,81 +54,7 @@ class FastLineReader {
   bool eof_;
 };
 
-bool isValidDateTime(const char* ts) {
-  if (strlen(ts) < 19) return false;
-  for (int i = 0; i < 19; ++i) {
-    if (i == 4 || i == 7) {
-      if (ts[i] != '-') return false;
-    } else if (i == 10) {
-      if (ts[i] != ' ') return false;
-    } else if (i == 13 || i == 16) {
-      if (ts[i] != ':') return false;
-    } else {
-      if (ts[i] < '0' || ts[i] > '9') return false;
-    }
-  }
-  return true;
-}
 
-uint32_t findStartOffset(File& file, const String& startTs) {
-  if (startTs.length() == 0) {
-    return 0;
-  }
-
-  uint32_t low = 0;
-  uint32_t high = file.size();
-  char lineBuf[128];
-
-  while (high - low > 512) {
-    uint32_t mid = low + (high - low) / 2;
-    file.seek(mid);
-    
-    if (mid > 0) {
-      while (file.available() && file.read() != '\n') {
-        // skip
-      }
-    }
-
-    uint32_t currentPos = file.position();
-    if (currentPos >= high) {
-      high = mid;
-      continue;
-    }
-
-    FastLineReader reader(file);
-    if (!reader.readLine(lineBuf, sizeof(lineBuf))) {
-      high = mid;
-      continue;
-    }
-
-    if (lineBuf[0] == '\0' || strncmp(lineBuf, "timestamp,", 10) == 0) {
-      low = file.position();
-      continue;
-    }
-
-    if (strlen(lineBuf) < 19) {
-      low = file.position();
-      continue;
-    }
-
-    char ts[20];
-    strncpy(ts, lineBuf, 19);
-    ts[19] = '\0';
-
-    if (!isValidDateTime(ts)) {
-      low = file.position();
-      continue;
-    }
-
-    if (strcmp(ts, startTs.c_str()) < 0) {
-      low = currentPos;
-    } else {
-      high = currentPos;
-    }
-  }
-
-  return low;
-}
 }  // namespace
 
 bool WebManager::begin(const char* ssid, const char* password, const char* hostname, LoggerManager* logger, TimeManager* time) {
@@ -812,8 +738,9 @@ void WebManager::handleRoot() {
             </div>
           </div>
 
-          <div style='display: flex; justify-content: flex-end; margin-bottom: 8px;'>
-            <button id='btnLoad' style='width: auto; padding: 10px 20px;'>Load Graph Data</button>
+          <div style='display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 8px;'>
+            <button id='btnDownloadCsv' style='width: auto; padding: 10px 20px; background-color: var(--bg-card); border: 1px solid var(--border); color: var(--text-main); cursor: pointer;'>Download Filtered CSV</button>
+            <button id='btnLoad' style='width: auto; padding: 10px 20px; cursor: pointer;'>Load Graph Data</button>
           </div>
           
           <div class='alert-banner' id='historyAlert' style='margin-bottom: 10px;'></div>
@@ -869,6 +796,7 @@ void WebManager::handleRoot() {
     let hoveredPoint = null;
     let lastLive = null;
     let lastHealth = null;
+    let historyDataset = [];
 
     async function fetchJson(url) {
       const res = await fetch(url, { cache: 'no-store' });
@@ -1145,39 +1073,6 @@ void WebManager::handleRoot() {
       return null;
     }
 
-    function buildHistoryQuery() {
-      const metric = $('metric').value;
-      const range = $('range').value;
-      let start = '';
-      let end = '';
-      const now = new Date();
-
-      if (range === 'custom') {
-        const s = $('start').value;
-        const e = $('end').value;
-        if (s) start = s.replace('T', ' ') + ':00';
-        if (e) end = e.replace('T', ' ') + ':00';
-      } else {
-        const mins = {
-          '15m': 15,
-          '1h': 60,
-          '6h': 360,
-          '24h': 1440
-        }[range] || 60;
-        const startDate = new Date(now.getTime() - mins * 60000);
-        start = fmtLocalTs(startDate);
-        end = fmtLocalTs(now);
-      }
-
-      const maxPoints = Math.max(20, Math.min(1000, Number($('maxPoints').value || 300)));
-      const q = new URLSearchParams();
-      q.set('metric', metric);
-      q.set('max_points', String(maxPoints));
-      if (start) q.set('start', start);
-      if (end) q.set('end', end);
-      return q.toString();
-    }
-
     let isLoadingHistory = false;
 
     function updateModalProgress(percent, status) {
@@ -1207,53 +1102,104 @@ void WebManager::handleRoot() {
       modal.classList.add('active');
       updateModalProgress(0, 'Initializing data request...');
 
+      let start = '';
+      let end = '';
+      const range = $('range').value;
+      const now = new Date();
+      if (range === 'custom') {
+        const s = $('start').value;
+        const e = $('end').value;
+        if (s) start = s.replace('T', ' ') + ':00';
+        if (e) end = e.replace('T', ' ') + ':00';
+      } else {
+        const mins = {
+          '15m': 15,
+          '1h': 60,
+          '6h': 360,
+          '24h': 1440
+        }[range] || 60;
+        const startDate = new Date(now.getTime() - mins * 60000);
+        start = fmtLocalTs(startDate);
+        end = fmtLocalTs(now);
+      }
+
+      const metric = $('metric').value;
       const maxPoints = Math.max(20, Math.min(1000, Number($('maxPoints').value || 300)));
-      const pageSize = 50;
-      let allPoints = [];
-      let offset = 0;
 
       try {
         setText('historyMeta', 'Loading history...');
-        const baseQuery = buildHistoryQuery();
-
-        while (true) {
-          const url = '/api/history?' + baseQuery + '&offset=' + offset + '&limit=' + pageSize;
-          const response = await fetch(url, { cache: 'no-store' });
-          if (!response.ok) {
-            throw new Error('HTTP ' + response.status);
-          }
-
-          const data = await response.json();
-          const matched = data.matched ?? 0;
-          const stride = data.stride ?? 1;
-          const points = Array.isArray(data.points) ? data.points : [];
-
-          if (points.length === 0 || matched === 0) {
-            break;
-          }
-
-          allPoints = allPoints.concat(points);
-          const totalExpected = Math.min(Math.ceil(matched / stride), maxPoints);
-
-          const percent = Math.min(100, (allPoints.length / totalExpected) * 100);
-          updateModalProgress(percent, 'Loaded ' + allPoints.length + ' of ' + totalExpected + ' points...');
-
-          if (allPoints.length >= totalExpected || points.length < pageSize) {
-            break;
-          }
-
-          offset += pageSize;
-          // Wait 250ms to yield to ESP8266's main loop / sensor logging
-          await new Promise(resolve => setTimeout(resolve, 250));
+        updateModalProgress(20, 'Requesting binary log...');
+        
+        const url = '/api/history?start=' + encodeURIComponent(start) + '&end=' + encodeURIComponent(end);
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) {
+          throw new Error('HTTP status ' + res.status);
         }
 
-        chartPoints = allPoints;
+        updateModalProgress(40, 'Downloading binary data...');
+        const startTimestampStr = res.headers.get('X-Start-Timestamp') || start;
+        const intervalMs = parseInt(res.headers.get('X-Sample-Interval-Ms') || '1000');
+        const recordSize = parseInt(res.headers.get('X-Record-Size') || '17');
+
+        const arrayBuffer = await res.arrayBuffer();
+        updateModalProgress(60, 'Parsing binary records...');
+        
+        const view = new DataView(arrayBuffer);
+        const totalRecords = arrayBuffer.byteLength / recordSize;
+        const baseTime = new Date(startTimestampStr.replace(' ', 'T')).getTime();
+        
+        let allPoints = [];
+        
+        for (let i = 0; i < totalRecords; i++) {
+          const offset = i * recordSize;
+          
+          const uptime = view.getUint32(offset + 0, true);
+          const temp = view.getFloat32(offset + 4, true);
+          const hum = view.getFloat32(offset + 8, true);
+          const pres = view.getFloat32(offset + 12, true);
+          const quality = view.getUint8(offset + 16);
+
+          if (quality === 2) {
+            continue; // Empty/unwritten slot
+          }
+
+          const recTime = new Date(baseTime + i * intervalMs);
+          const recTs = fmtLocalTs(recTime);
+          
+          let val = 0;
+          if (metric === 'temp_c') val = temp;
+          else if (metric === 'humidity_pct') val = hum;
+          else if (metric === 'pressure_hpa') val = pres;
+
+          allPoints.push({
+            ts: recTs,
+            q: quality === 0 ? 'ntp' : 'estimated',
+            v: val,
+            temp: temp,
+            hum: hum,
+            pres: pres,
+            uptime: uptime
+          });
+        }
+
+        updateModalProgress(80, 'Downsampling chart points...');
+
+        const stride = (allPoints.length > maxPoints) ? Math.ceil(allPoints.length / maxPoints) : 1;
+        
+        chartPoints = [];
+        for (let i = 0; i < allPoints.length; i += stride) {
+          chartPoints.push(allPoints[i]);
+        }
+
         historyLoaded = true;
         renderChart();
+
         setText('historyMeta',
-          'Metric: ' + ($('metric').value) +
-          ' | Matched Samples: ' + (allPoints.length ? allPoints.length : 0) +
-          ' | Downsampled Points: ' + chartPoints.length);
+          'Metric: ' + metric +
+          ' | Total Logged: ' + allPoints.length +
+          ' | Downsampled: ' + chartPoints.length);
+
+        historyDataset = allPoints;
 
         updateModalProgress(100, 'Done!');
         await new Promise(resolve => setTimeout(resolve, 250));
@@ -1271,6 +1217,28 @@ void WebManager::handleRoot() {
           isLoadingHistory = false;
         }, 100);
       }
+    }
+
+    function downloadFilteredCSV() {
+      if (!historyDataset || historyDataset.length === 0) {
+        alert("No history data loaded to download. Click Load Graph Data first.");
+        return;
+      }
+      
+      let csv = 'timestamp,timestamp_quality,temp_c,humidity_pct,pressure_hpa,uptime_s\n';
+      for (const p of historyDataset) {
+        csv += p.ts + ',' + p.q + ',' + p.temp.toFixed(2) + ',' + p.hum.toFixed(2) + ',' + p.pres.toFixed(2) + ',' + p.uptime + '\n';
+      }
+      
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', 'filtered_log.csv');
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
 
     async function loadLogs() {
@@ -1498,6 +1466,7 @@ void WebManager::handleRoot() {
     $('btnNtp').addEventListener('click', () => triggerAction('/api/action/ntp-retry', 'btnNtp'));
 
     $('btnLoad').addEventListener('click', loadHistory);
+    $('btnDownloadCsv').addEventListener('click', downloadFilteredCSV);
     $('range').addEventListener('change', onRangeChanged);
 
     (async function boot() {
@@ -1731,147 +1700,7 @@ void WebManager::handleConfigPost() {
   server_.send(200, "application/json", out);
 }
 
-void WebManager::streamHistoryJson(File& file,
-                                   const String& metric,
-                                   const String& startTs,
-                                   const String& endTs,
-                                   uint32_t maxPoints,
-                                   uint32_t offset,
-                                   uint32_t limit) {
-  uint32_t matched = 0;
-  char lineBuf[128];
 
-  uint32_t startOffset = findStartOffset(file, startTs);
-
-  // Pass 1: Count matched points
-  {
-    file.seek(startOffset);
-    if (startOffset > 0) {
-      while (file.available() && file.read() != '\n') {
-        // skip
-      }
-    }
-    FastLineReader reader(file);
-    while (reader.readLine(lineBuf, sizeof(lineBuf))) {
-      if (lineBuf[0] == '\0' || strncmp(lineBuf, "timestamp,", 10) == 0) {
-        continue;
-      }
-      
-      if (strlen(lineBuf) < 19) {
-        continue;
-      }
-      char ts[20];
-      strncpy(ts, lineBuf, 19);
-      ts[19] = '\0';
-
-      if (!isValidDateTime(ts)) {
-        continue;
-      }
-
-      if (startTs.length() > 0 && strcmp(ts, startTs.c_str()) < 0) {
-        continue;
-      }
-      if (endTs.length() > 0 && strcmp(ts, endTs.c_str()) > 0) {
-        break;
-      }
-
-      ++matched;
-    }
-  }
-
-  const uint32_t stride = (matched > maxPoints) ? ((matched + maxPoints - 1) / maxPoints) : 1;
-
-  server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server_.send(200, "application/json", "");
-
-  server_.sendContent("{");
-  server_.sendContent("\"metric\":\"");
-  server_.sendContent(metric);
-  server_.sendContent("\",\"matched\":");
-  server_.sendContent(String(matched));
-  server_.sendContent(",\"stride\":");
-  server_.sendContent(String(stride));
-  server_.sendContent(",\"points\":[");
-
-  uint32_t matchedIndex = 0;
-  uint32_t dsIndex = 0;
-  uint32_t emitted = 0;
-
-  // Pass 2: Emit matched points
-  {
-    file.seek(startOffset);
-    if (startOffset > 0) {
-      while (file.available() && file.read() != '\n') {
-        // skip
-      }
-    }
-    FastLineReader reader(file);
-    while (reader.readLine(lineBuf, sizeof(lineBuf))) {
-      if (lineBuf[0] == '\0' || strncmp(lineBuf, "timestamp,", 10) == 0) {
-        continue;
-      }
-
-      if (strlen(lineBuf) < 19) {
-        continue;
-      }
-      char ts[20];
-      strncpy(ts, lineBuf, 19);
-      ts[19] = '\0';
-
-      if (!isValidDateTime(ts)) {
-        continue;
-      }
-
-      if (startTs.length() > 0 && strcmp(ts, startTs.c_str()) < 0) {
-        continue;
-      }
-      if (endTs.length() > 0 && strcmp(ts, endTs.c_str()) > 0) {
-        break;
-      }
-
-      if ((matchedIndex % stride) != 0) {
-        ++matchedIndex;
-        continue;
-      }
-      ++matchedIndex;
-
-      if (dsIndex >= offset) {
-        char* saveptr = nullptr;
-        char* c0 = strtok_r(lineBuf, ",", &saveptr);
-        char* c1 = strtok_r(nullptr, ",", &saveptr);
-        char* c2 = strtok_r(nullptr, ",", &saveptr);
-        char* c3 = strtok_r(nullptr, ",", &saveptr);
-        char* c4 = strtok_r(nullptr, ",", &saveptr);
-
-        if (c0 && c1 && c2 && c3 && c4) {
-          const char* valStr = nullptr;
-          if (metric == "temp_c") {
-            valStr = c2;
-          } else if (metric == "humidity_pct") {
-            valStr = c3;
-          } else if (metric == "pressure_hpa") {
-            valStr = c4;
-          }
-
-          if (valStr) {
-            if (emitted > 0) {
-              server_.sendContent(",");
-            }
-            String item = "{\"ts\":\"" + String(c0) + "\",\"q\":\"" + String(c1) + "\",\"v\":" + String(atof(valStr), 2) + "}";
-            server_.sendContent(item);
-            ++emitted;
-            if (emitted >= limit) {
-              break;
-            }
-          }
-        }
-      }
-      ++dsIndex;
-    }
-  }
-
-  server_.sendContent("]}");
-}
 
 void WebManager::streamEventsJson(File& file, const String& startTs, const String& endTs, uint32_t limit) {
   server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
@@ -1908,54 +1737,122 @@ void WebManager::streamEventsJson(File& file, const String& startTs, const Strin
 }
 
 void WebManager::handleHistoryJson() {
-  const String metric = server_.arg("metric");
-  if (metric != "temp_c" && metric != "humidity_pct" && metric != "pressure_hpa") {
-    sendJsonError(400, "metric must be temp_c, humidity_pct, or pressure_hpa");
-    return;
-  }
-
-  uint32_t maxPoints = 300;
-  if (server_.hasArg("max_points")) {
-    if (!parsePositiveUIntArg("max_points", maxPoints) || maxPoints == 0) {
-      sendJsonError(400, "max_points must be a positive integer");
-      return;
-    }
-    if (maxPoints > 1000) {
-      maxPoints = 1000;
-    }
-  }
-
-  uint32_t offset = 0;
-  if (server_.hasArg("offset")) {
-    if (!parsePositiveUIntArg("offset", offset)) {
-      sendJsonError(400, "offset must be a non-negative integer");
-      return;
-    }
-  }
-
-  uint32_t limit = maxPoints;
-  if (server_.hasArg("limit")) {
-    if (!parsePositiveUIntArg("limit", limit) || limit == 0) {
-      sendJsonError(400, "limit must be a positive integer");
-      return;
-    }
-  }
-
   if (!ensureSdReady()) {
     sendJsonError(503, "SD card unavailable");
     return;
   }
 
-  File file = SD.open(AppConfig::LOG_FILE_PATH, "r");
-  if (!file) {
-    sendJsonError(404, "log file not found");
+  const String startTs = server_.arg("start");
+  const String endTs = server_.arg("end");
+
+  if (startTs.length() < 19 || endTs.length() < 19) {
+    sendJsonError(400, "start and end must be YYYY-MM-DD HH:MM:SS");
     return;
   }
 
-  const String startTs = server_.arg("start");
-  const String endTs = server_.arg("end");
-  streamHistoryJson(file, metric, startTs, endTs, maxPoints, offset, limit);
-  file.close();
+  String startDay = startTs.substring(0, 10);
+  String endDay = endTs.substring(0, 10);
+
+  int startHour = startTs.substring(11, 13).toInt();
+  int startMin = startTs.substring(14, 16).toInt();
+  int startSec = startTs.substring(17, 19).toInt();
+  uint32_t startSlot = startHour * 3600 + startMin * 60 + startSec;
+
+  int endHour = endTs.substring(11, 13).toInt();
+  int endMin = endTs.substring(14, 16).toInt();
+  int endSec = endTs.substring(17, 19).toInt();
+  uint32_t endSlot = endHour * 3600 + endMin * 60 + endSec;
+
+  uint32_t totalRecords = 0;
+  if (startDay == endDay) {
+    if (endSlot >= startSlot) {
+      totalRecords = endSlot - startSlot + 1;
+    }
+  } else {
+    totalRecords = (86400 - startSlot) + (endSlot + 1);
+  }
+
+  uint32_t totalBytes = totalRecords * sizeof(LogRecord);
+
+  server_.sendHeader("Content-Type", "application/octet-stream");
+  server_.sendHeader("Content-Length", String(totalBytes));
+  server_.sendHeader("X-Start-Timestamp", startTs);
+  server_.sendHeader("X-Sample-Interval-Ms", "1000");
+  server_.sendHeader("X-Record-Size", String(sizeof(LogRecord)));
+  server_.send(200, "application/octet-stream", "");
+
+  uint8_t buffer[512];
+  uint32_t recordsToRead = totalRecords;
+  uint32_t currentSlot = startSlot;
+  String currentDay = startDay;
+
+  while (recordsToRead > 0) {
+    String filepath = "/logs/" + currentDay + ".bin";
+    File file = SD.open(filepath, "r");
+
+    uint32_t limitSlots = (currentDay == startDay && startDay != endDay) ? (86400 - startSlot) : 
+                          ((currentDay == endDay) ? (endSlot - currentSlot + 1) : (endSlot - currentSlot + 1));
+    if (limitSlots > recordsToRead) {
+      limitSlots = recordsToRead;
+    }
+
+    if (!file) {
+      LogRecord emptyRecord;
+      memset(&emptyRecord, 0, sizeof(LogRecord));
+      emptyRecord.quality = 2; // Empty
+
+      uint32_t slotsLeft = limitSlots;
+      while (slotsLeft > 0) {
+        uint32_t chunkSlots = sizeof(buffer) / sizeof(LogRecord);
+        if (chunkSlots > slotsLeft) {
+          chunkSlots = slotsLeft;
+        }
+
+        for (uint32_t i = 0; i < chunkSlots; ++i) {
+          memcpy(buffer + i * sizeof(LogRecord), &emptyRecord, sizeof(LogRecord));
+        }
+
+        server_.client().write(buffer, chunkSlots * sizeof(LogRecord));
+        slotsLeft -= chunkSlots;
+        recordsToRead -= chunkSlots;
+      }
+    } else {
+      file.seek(currentSlot * sizeof(LogRecord));
+      uint32_t slotsLeft = limitSlots;
+
+      while (slotsLeft > 0) {
+        uint32_t chunkSlots = sizeof(buffer) / sizeof(LogRecord);
+        if (chunkSlots > slotsLeft) {
+          chunkSlots = slotsLeft;
+        }
+
+        size_t bytesToRead = chunkSlots * sizeof(LogRecord);
+        size_t bytesRead = file.read(buffer, bytesToRead);
+
+        if (bytesRead < bytesToRead) {
+          LogRecord emptyRecord;
+          memset(&emptyRecord, 0, sizeof(LogRecord));
+          emptyRecord.quality = 2;
+
+          for (size_t offset = bytesRead; offset < bytesToRead; offset += sizeof(LogRecord)) {
+            memcpy(buffer + offset, &emptyRecord, sizeof(LogRecord));
+          }
+        }
+
+        server_.client().write(buffer, bytesToRead);
+        slotsLeft -= chunkSlots;
+        recordsToRead -= chunkSlots;
+      }
+      file.close();
+    }
+
+    if (currentDay == startDay && startDay != endDay) {
+      currentDay = endDay;
+      currentSlot = 0;
+    } else {
+      break;
+    }
+  }
 }
 
 void WebManager::handleEventsJson() {
