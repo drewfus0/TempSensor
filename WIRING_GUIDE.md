@@ -15,7 +15,7 @@
 | SPI | SCK | D5 | GPIO14 | microSD Shield |
 | SPI | MISO | D6 | GPIO12 | microSD Shield |
 | SPI | MOSI | D7 | GPIO13 | microSD Shield |
-| SPI | CS/SS | D8 | GPIO15 | microSD Shield (D4 CS rerouted to D8) |
+| SPI | CS/SS | D0 | GPIO16 | microSD Shield (D4 CS rerouted to D0) |
 | Power | 3V3 | 3V3 | — | OLED + BME280 + microSD Shield |
 | Power | Ground | G | — | OLED + BME280 + microSD Shield |
 
@@ -46,14 +46,14 @@ The BME280 shares the same I2C bus as the OLED.
 If stacked directly on the D1 mini, SPI lines are already routed.
 
 - **CS (shield pad)** -> D4 (GPIO0) *(shield default pad)*
-- **Jumper**: Shield CS (D4 pad) -> D1 mini D8 (GPIO15)
+- **Jumper**: Shield CS (D4 pad) -> D1 mini D0 (GPIO16)
 - **SCK** -> D5 (GPIO14)
 - **MISO** -> D6 (GPIO12)
 - **MOSI** -> D7 (GPIO13)
 - **VCC** -> 3V3
 - **GND** -> G
 
-Note: LOLIN microSD Shield v1.2.0 defaults CS to D4/GPIO0, but this build uses a jumper reroute to D8/GPIO15.
+Note: LOLIN microSD Shield v1.2.0 defaults CS to D4 (GPIO2), but this build uses a jumper reroute to D0 (GPIO16) to avoid boot issues.
 
 ---
 
@@ -75,7 +75,7 @@ constexpr uint8_t BME280_I2C_ADDR = 0x76;
 constexpr int I2C_SDA_PIN = 4;   // D2
 constexpr int I2C_SCL_PIN = 5;   // D1
 
-constexpr int SD_CS_PIN = 15;    // D8 (shield D4 CS rerouted)
+constexpr int SD_CS_PIN = 16;    // D0 (shield D4 CS rerouted to D0)
 constexpr int SD_SCK_PIN = 14;   // D5
 constexpr int SD_MOSI_PIN = 13;  // D7
 constexpr int SD_MISO_PIN = 12;  // D6
@@ -97,4 +97,4 @@ constexpr int SD_MISO_PIN = 12;  // D6
 
 1. If OLED is blank, verify I2C address (`0x3C` vs `0x3D`) and power.
 2. If BME280 is not found, swap between `0x76` and `0x77` based on SDO wiring.
-3. If SD init fails, confirm shield CS (D4 pad) is actually jumpered to D8 and card is FAT32 formatted.
+3. If SD init fails, confirm shield CS (D4 pad) is actually jumpered to D0 and card is FAT32 formatted.

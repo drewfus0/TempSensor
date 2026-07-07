@@ -37,4 +37,5 @@ class AppCoordinator {
   uint32_t lastSampleMs_ = 0;
   uint32_t lastDisplayMs_ = 0;
   uint32_t lastDiagMs_ = 0;
+  uint32_t lastBatteryLogMs_ = 0;
 };

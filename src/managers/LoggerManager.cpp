@@ -363,3 +363,35 @@ bool LoggerManager::attemptRecovery() {
 
   return false;
 }
+
+bool LoggerManager::logBattery(const char* timestamp, float voltage, int percent, const char* status) {
+  if (!sdHealthy_) {
+    return false;
+  }
+
+  const char* filepath = "/logs/battery.csv";
+  bool exists = SD.exists(filepath);
+
+  File file = SD.open(filepath, "a");
+  if (!file) {
+    sdHealthy_ = false;
+    Serial.println("[Logger] Failed to open /logs/battery.csv for writing");
+    return false;
+  }
+
+  if (!exists || file.size() == 0) {
+    file.println("timestamp,voltage,percent,status");
+  }
+
+  const int written = file.printf("%s,%.2f,%d,%s\n", timestamp, voltage, percent, status);
+  file.flush();
+  file.close();
+
+  if (written <= 0) {
+    sdHealthy_ = false;
+    Serial.println("[Logger] Battery log write failed");
+    return false;
+  }
+
+  return true;
+}

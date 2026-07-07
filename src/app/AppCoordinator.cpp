@@ -73,6 +73,15 @@ void AppCoordinator::loop() {
   handleDiagnostics(nowMs);
   refreshHealth(nowMs);
 
+  // Log battery statistics to /logs/battery.csv every 60 seconds
+  if (nowMs - lastBatteryLogMs_ >= 60000) {
+    lastBatteryLogMs_ = nowMs;
+    char ts[32]{};
+    TimestampQuality quality = TimestampQuality::Estimated;
+    timeManager_.getTimestamp(ts, sizeof(ts), quality);
+    loggerManager_.logBattery(ts, batteryManager_.getVoltage(), batteryManager_.getPercent(), batteryManager_.getStatus());
+  }
+
   webManager_.loop();
 }
 

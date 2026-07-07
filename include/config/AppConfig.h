@@ -28,7 +28,7 @@ constexpr uint8_t BME280_I2C_ADDR = 0x76;
 constexpr int I2C_SDA_PIN = 4;   // D2
 constexpr int I2C_SCL_PIN = 5;   // D1
 
-constexpr int SD_CS_PIN = 15;    // D8 (shield CS rerouted from D4 -> D8)
+constexpr int SD_CS_PIN = 16;    // D0 (GPIO16 - shield CS rerouted from D4 -> D0)
 constexpr int SD_SCK_PIN = 14;   // D5
 constexpr int SD_MOSI_PIN = 13;  // D7
 constexpr int SD_MISO_PIN = 12;  // D6

@@ -817,6 +817,16 @@ void WebManager::handleRoot() {
             No history data loaded.
           </div>
         </section>
+
+        <section class='card' style='margin-top: 20px;'>
+          <h2>Battery Voltage History (24h)</h2>
+          <div class='chart-container' id='batChartParent' style='height: 250px;'>
+            <div id='batChart'></div>
+          </div>
+          <div class='live-meta' id='batChartMeta' style='margin-top: 12px; text-align: left;'>
+            No battery history loaded.
+          </div>
+        </section>
       </div>
     </div>
 
@@ -850,6 +860,7 @@ void WebManager::handleRoot() {
     const $ = (id) => document.getElementById(id);
     
     let uplotInstance = null;
+    let batChartInstance = null;
     let historyLoaded = false;
     let historyDataset = [];
     let lastLive = null;
@@ -1053,11 +1064,164 @@ void WebManager::handleRoot() {
       uplotInstance = new uPlot(opts, data, target);
     }
 
+    function renderBatteryChart(dataset) {
+      const container = $('batChartParent');
+      const target = $('batChart');
+      const rect = container.getBoundingClientRect();
+
+      if (batChartInstance) {
+        batChartInstance.destroy();
+        batChartInstance = null;
+      }
+
+      if (!dataset || dataset.length === 0) {
+        target.innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 250px; font-size: 13px;">No battery history data.</div>`;
+        return;
+      }
+
+      const xData = [];
+      const vData = [];
+
+      for (let i = 0; i < dataset.length; i++) {
+        xData.push(dataset[i].ts);
+        vData.push(dataset[i].v);
+      }
+
+      const data = [xData, vData];
+
+      const opts = {
+        width: rect.width,
+        height: 250,
+        title: "",
+        class: "uplot-theme",
+        cursor: {
+          show: true
+        },
+        select: {
+          show: false
+        },
+        scales: {
+          x: {
+            time: true,
+          },
+          v: {
+            auto: true,
+            range: [3.0, 4.3],
+          }
+        },
+        series: [
+          {},
+          {
+            show: true,
+            scale: 'v',
+            label: 'Voltage',
+            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' V' : '--',
+            stroke: '#fbbf24',
+            width: 2,
+            fill: 'rgba(251, 191, 36, 0.04)',
+          }
+        ],
+        axes: [
+          {
+            stroke: "rgba(255, 255, 255, 0.5)",
+            grid: {
+              show: true,
+              stroke: "rgba(255, 255, 255, 0.05)",
+              width: 1,
+            },
+            ticks: {
+              show: true,
+              stroke: "rgba(255, 255, 255, 0.1)",
+              width: 1,
+            },
+            space: 60,
+          },
+          {
+            scale: 'v',
+            side: 3,
+            stroke: "rgba(255, 255, 255, 0.5)",
+            grid: {
+              show: true,
+              stroke: "rgba(255, 255, 255, 0.05)",
+              width: 1,
+            },
+            ticks: {
+              show: true,
+              stroke: "rgba(255, 255, 255, 0.1)",
+              width: 1,
+            },
+            space: 30,
+          }
+        ]
+      };
+
+      target.innerHTML = '';
+      batChartInstance = new uPlot(opts, data, target);
+    }
+
+    async function loadBatteryHistory() {
+      try {
+        const now = new Date();
+        const twentyFourHoursAgoEpoch = (now.getTime() - 24 * 60 * 60 * 1000) / 1000;
+        
+        const csvText = await fetchText('/api/logs/download?file=/logs/battery.csv');
+        if (!csvText || csvText.trim() === '') {
+          setText('batChartMeta', 'No battery data file found or file empty.');
+          renderBatteryChart([]);
+          return;
+        }
+
+        const lines = csvText.split('\n');
+        const dataset = [];
+
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (line === '') continue;
+
+          const parts = line.split(',');
+          if (parts.length < 3) continue;
+
+          const ts = parts[0];
+          const voltage = parseFloat(parts[1]);
+          const percent = parseInt(parts[2]);
+          const status = parts[3] || 'Unknown';
+
+          const epochSec = Date.parse(ts.replace(' ', 'T')) / 1000;
+          if (!isNaN(epochSec) && epochSec >= twentyFourHoursAgoEpoch) {
+            dataset.push({ ts: epochSec, v: voltage, p: percent, s: status });
+          }
+        }
+
+        dataset.sort((a, b) => a.ts - b.ts);
+        renderBatteryChart(dataset);
+
+        if (dataset.length > 0) {
+          const lastPoint = dataset[dataset.length - 1];
+          setText('batChartMeta', `Loaded ${dataset.length} points. Latest: ${lastPoint.v.toFixed(2)}V (${lastPoint.p}%) - ${lastPoint.s}`);
+        } else {
+          setText('batChartMeta', 'No battery records found in the last 24 hours.');
+        }
+      } catch (err) {
+        console.error("Battery history load error", err);
+        if (err.message.includes('HTTP 404')) {
+          setText('batChartMeta', 'No battery log file found yet (waiting for first 60s sample).');
+        } else {
+          setText('batChartMeta', 'Failed to load battery history: ' + err.message);
+        }
+        renderBatteryChart([]);
+      }
+    }
+
     window.addEventListener('resize', () => {
       if (uplotInstance) {
         const container = $('chart-parent');
         const rect = container.getBoundingClientRect();
         uplotInstance.setSize({ width: rect.width, height: 500 });
+      }
+      if (batChartInstance) {
+        const container = $('batChartParent');
+        const rect = container.getBoundingClientRect();
+        batChartInstance.setSize({ width: rect.width, height: 250 });
       }
     });
 
@@ -1534,16 +1698,17 @@ void WebManager::handleRoot() {
       await loadHealth();
       await loadLogs();
       await loadEvents();
+      await loadBatteryHistory();
       renderChart();
 
       // Staggered polling intervals to spread the load on ESP8266
       setTimeout(() => {
-        setInterval(loadLive, 30000);
-      }, 30000); // Live: Slot 0 (starts at 30s)
+        setInterval(loadLive, 15000);
+      }, 5000 ); // Live: Slot 0 (starts at 10s)
 
       setTimeout(() => {
-        setInterval(loadHealth, 60000);
-      }, 10000); // Health: Slot 10 (starts at 70s)
+        setInterval(loadHealth, 20000);
+      }, 10000); // Health: Slot 10 (starts at 20s)
 
       setTimeout(() => {
         setInterval(loadEvents, 60000);
@@ -1552,6 +1717,10 @@ void WebManager::handleRoot() {
       setTimeout(() => {
         setInterval(loadLogs, 60000);
       }, 40000); // Logs: Slot 40 (starts at 100s)
+
+      setTimeout(() => {
+        setInterval(loadBatteryHistory, 60000);
+      }, 45000); // Battery: Slot 45 (starts at 95s)
 
       setTimeout(() => {
         setInterval(loadStaticPanels, 60000);
@@ -1566,13 +1735,19 @@ void WebManager::handleRoot() {
 }
 
 void WebManager::handleLocalUPlotJs() {
+  server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server_.sendHeader("Content-Encoding", "gzip");
-  server_.send_P(200, "application/javascript", (const char*)UPLOT_JS_GZ, UPLOT_JS_GZ_LEN);
+  server_.sendHeader("Cache-Control", "public, max-age=86400");
+  server_.send(200, "application/javascript", "");
+  server_.sendContent_P((const char*)UPLOT_JS_GZ, UPLOT_JS_GZ_LEN);
 }
 
 void WebManager::handleLocalUPlotCss() {
+  server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server_.sendHeader("Content-Encoding", "gzip");
-  server_.send_P(200, "text/css", (const char*)UPLOT_CSS_GZ, UPLOT_CSS_GZ_LEN);
+  server_.sendHeader("Cache-Control", "public, max-age=86400");
+  server_.send(200, "text/css", "");
+  server_.sendContent_P((const char*)UPLOT_CSS_GZ, UPLOT_CSS_GZ_LEN);
 }
 
 void WebManager::handleLiveJson() {

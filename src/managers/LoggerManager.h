@@ -16,6 +16,7 @@ class LoggerManager {
   bool flush();
   bool flushIfDue(uint32_t nowMs, uint32_t flushIntervalMs);
   bool logEvent(const char* eventName, const char* timestamp, TimestampQuality quality);
+  bool logBattery(const char* timestamp, float voltage, int percent, const char* status);
 
   bool forceRetry();
   bool attemptRecovery();

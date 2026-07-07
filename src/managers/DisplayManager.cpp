@@ -267,20 +267,25 @@ void DisplayManager::renderLatest(const Sample& sample,
   display.printf("T:%2.1fC\n", sample.temperatureC);
   display.printf("H:%2.1f%%\n", sample.humidityPct);
   display.printf("P:%4.0fhPa\n", sample.pressureHpa);
-  display.println(statusBuf);
-
-  // Rotate between timestamp and battery status every 3 seconds
-  const uint32_t sec = millis() / 3000;
-  if (batteryPercent >= 0 && batteryStatus != nullptr && (sec % 2 == 1)) {
+  // Line 4: Battery % and state reporting
+  if (batteryPercent >= 0 && batteryStatus != nullptr) {
     char batBuf[24]{};
     if (strcmp(batteryStatus, "Full") == 0) {
-      snprintf(batBuf, sizeof(batBuf), "Bat:Full");
+      snprintf(batBuf, sizeof(batBuf), "B:100%% Ful");
     } else if (strcmp(batteryStatus, "Charging / USB") == 0) {
-      snprintf(batBuf, sizeof(batBuf), "Bat:%d%% Chg", batteryPercent);
+      snprintf(batBuf, sizeof(batBuf), "B:%02d%% Chg", batteryPercent);
     } else {
-      snprintf(batBuf, sizeof(batBuf), "Bat:%d%% Dis", batteryPercent);
+      snprintf(batBuf, sizeof(batBuf), "B:%02d%% Dis", batteryPercent);
     }
     display.println(batBuf);
+  } else {
+    display.println("B:--% Unk");
+  }
+
+  // Line 5: Rotate between statusBuf and timestamp every 3 seconds
+  const uint32_t sec = millis() / 3000;
+  if (sec % 2 == 1) {
+    display.println(statusBuf);
   } else {
     display.println(ntpSynced ? tsBuf : "syncing");
   }

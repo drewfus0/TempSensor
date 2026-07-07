@@ -23,4 +23,8 @@ class BatteryManager {
 
   uint32_t lastReadMs_ = 0;
   float emaVoltage_ = -1.0f;
+  uint32_t lastPercentChangeMs_ = 0;
+  int lastRecordedPercent_ = -1;
+  float smoothedSecondsPerPercent_ = 540.0f;
+  const char* lastStatus_ = "Unknown";
 };
