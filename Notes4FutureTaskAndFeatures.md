@@ -18,3 +18,16 @@ web pages stored currently in code other options: Flash, SPIFFS, or SD card?
 sd Card File manipulation. (delete rename download)
 
 display move the battery % to the 4th line with state reporting
+
+1. OTA
+
+2. Events to Serial output 
+- ALL api calls? Maybe not all?
+- ntp sync failure/success/retry?
+- sd card save / flush / flush failed?
+- wifi on change connect / disconnect / ip 
+- 
+3. Event File.
+- Boot time. allow correction to be made if ntp sync is later successful.
+- 
+
