@@ -133,7 +133,8 @@ void AppCoordinator::handleDisplayRefresh(uint32_t nowMs) {
   }
 
   displayManager_.renderLatest(latestSample_, (WiFi.status() == WL_CONNECTED), timeManager_.isNtpSynced(),
-                               loggerManager_.isSdHealthy(), ipBuf, batteryManager_.getPercent(), batteryManager_.getStatus());
+                               loggerManager_.isSdHealthy(), ipBuf, batteryManager_.getPercent(), batteryManager_.getStatus(),
+                               loggerManager_.queueDepth(), loggerManager_.queueCapacity());
 }
 
 void AppCoordinator::handleDiagnostics(uint32_t nowMs) {

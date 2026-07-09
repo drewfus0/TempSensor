@@ -244,7 +244,9 @@ void DisplayManager::renderLatest(const Sample& sample,
                                   bool sdHealthy,
                                   const char* ipAddress,
                                   int batteryPercent,
-                                  const char* batteryStatus) {
+                                  const char* batteryStatus,
+                                  size_t queueDepth,
+                                  size_t queueCapacity) {
   if (!ready_) {
     return;
   }
@@ -292,6 +294,19 @@ void DisplayManager::renderLatest(const Sample& sample,
 
   const char* ipText = (ipAddress && ipAddress[0] != '\0') ? ipAddress : "0.0.0.0";
   drawTinyText(ipText, 0, display.height() - TINY_CHAR_HEIGHT);
+
+  // Draw the memory buffer usage bar on the far right column (X = 63)
+  if (queueCapacity > 0) {
+    int barHeight = (queueDepth * display.height()) / queueCapacity;
+    if (queueDepth > 0 && barHeight == 0) {
+      barHeight = 1; // Always show at least 1 pixel if the buffer is not empty
+    }
+    int maxX = display.width() - 1;
+    int maxY = display.height() - 1;
+    for (int y = 0; y < barHeight; ++y) {
+      display.drawPixel(maxX, maxY - y, WHITE);
+    }
+  }
 
   display.display();
 }

@@ -790,6 +790,24 @@ void WebManager::handleRoot() {
                 <option value='custom'>Custom</option>
               </select>
             </div>
+            <div class='form-group'>
+              <label for='binSize'>Bin Size <span id='binSizeMeta' style='font-size: 11px; color: var(--text-sub); margin-left: 4px;'></span></label>
+              <select id='binSize'>
+                <option value='auto' selected>Auto</option>
+                <option value='10'>10s</option>
+                <option value='30'>30s</option>
+                <option value='60'>1m</option>
+                <option value='300'>5m</option>
+                <option value='600'>10m</option>
+                <option value='1800'>30m</option>
+                <option value='3600'>1h</option>
+                <option value='custom'>Custom</option>
+              </select>
+            </div>
+            <div class='form-group' id='customBinGroup' style='display: none;'>
+              <label for='customBinVal'>Seconds</label>
+              <input id='customBinVal' type='number' min='1' max='86400' value='60' style='width: 100%;'>
+            </div>
           </div>
           
           <div class='controls-grid' id='customRangeGroup' style='grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; display: none;'>
@@ -914,6 +932,98 @@ void WebManager::handleRoot() {
       $('pillRef').textContent = stampNow();
     }
 
+    function formatAvgMinMax(self, val, seriesIdx, dataIdx, suffix, decimals) {
+      if (val == null) return '--';
+      const idx = dataIdx !== null ? dataIdx : self.data[0].length - 1;
+      const avgVal = self.data[seriesIdx][idx];
+      const minVal = self.data[seriesIdx - 2][idx];
+      const maxVal = self.data[seriesIdx - 1][idx];
+      return `Avg: ${avgVal != null ? avgVal.toFixed(decimals) : '--'}${suffix} | Min: ${minVal != null ? minVal.toFixed(decimals) : '--'}${suffix} | Max: ${maxVal != null ? maxVal.toFixed(decimals) : '--'}${suffix}`;
+    }
+
+    function aggregateData(dataset, binSizeSeconds) {
+      if (!dataset || dataset.length === 0) return [];
+
+      const parsed = [];
+      for (let i = 0; i < dataset.length; i++) {
+        const pt = dataset[i];
+        const epochSec = Date.parse(pt.ts.replace(' ', 'T')) / 1000;
+        if (!isNaN(epochSec)) {
+          parsed.push({
+            ts: epochSec,
+            temp: parseFloat(pt.temp),
+            hum: parseFloat(pt.hum),
+            pres: parseFloat(pt.pres)
+          });
+        }
+      }
+
+      if (parsed.length === 0) return [];
+      parsed.sort((a, b) => a.ts - b.ts);
+
+      const startTs = parsed[0].ts;
+      const endTs = parsed[parsed.length - 1].ts;
+      
+      const bins = [];
+      let currentBinStart = startTs;
+      let currentBinData = [];
+
+      for (let i = 0; i < parsed.length; i++) {
+        const pt = parsed[i];
+        while (pt.ts >= currentBinStart + binSizeSeconds) {
+          if (currentBinData.length > 0) {
+            bins.push({
+              ts: currentBinStart + binSizeSeconds / 2, // middle of the bin
+              data: currentBinData
+            });
+            currentBinData = [];
+          }
+          currentBinStart += binSizeSeconds;
+        }
+        currentBinData.push(pt);
+      }
+
+      if (currentBinData.length > 0) {
+        bins.push({
+          ts: currentBinStart + binSizeSeconds / 2,
+          data: currentBinData
+        });
+      }
+
+      const result = [];
+      for (let i = 0; i < bins.length; i++) {
+        const bin = bins[i];
+        const d = bin.data;
+        let tSum = 0, hSum = 0, pSum = 0;
+        let tMin = d[0].temp, tMax = d[0].temp;
+        let hMin = d[0].hum, hMax = d[0].hum;
+        let pMin = d[0].pres, pMax = d[0].pres;
+
+        for (let j = 0; j < d.length; j++) {
+          const val = d[j];
+          tSum += val.temp;
+          hSum += val.hum;
+          pSum += val.pres;
+
+          if (val.temp < tMin) tMin = val.temp;
+          if (val.temp > tMax) tMax = val.temp;
+          if (val.hum < hMin) hMin = val.hum;
+          if (val.hum > hMax) hMax = val.hum;
+          if (val.pres < pMin) pMin = val.pres;
+          if (val.pres > pMax) pMax = val.pres;
+        }
+
+        result.push({
+          ts: bin.ts,
+          temp: { min: tMin, max: tMax, avg: tSum / d.length },
+          hum: { min: hMin, max: hMax, avg: hSum / d.length },
+          pres: { min: pMin, max: pMax, avg: pSum / d.length }
+        });
+      }
+
+      return result;
+    }
+
     function renderChart() {
       const container = $('chart-parent');
       const target = $('chart');
@@ -929,28 +1039,79 @@ void WebManager::handleRoot() {
         return;
       }
 
-      const xData = [];
-      const tempYData = [];
-      const humYData = [];
-      const presYData = [];
-
-      for (let i = 0; i < historyDataset.length; i++) {
-        const pt = historyDataset[i];
-        const epochSec = Date.parse(pt.ts.replace(' ', 'T')) / 1000;
-        if (!isNaN(epochSec)) {
-          xData.push(epochSec);
-          tempYData.push(parseFloat(pt.temp));
-          humYData.push(parseFloat(pt.hum));
-          presYData.push(parseFloat(pt.pres));
+      // 1. Calculate bin size
+      let binSizeSeconds = 10;
+      const binSel = $('binSize').value;
+      if (binSel === 'auto') {
+        const range = $('range').value;
+        if (range === '15m') binSizeSeconds = 10;
+        else if (range === '1h') binSizeSeconds = 30;
+        else if (range === '6h') binSizeSeconds = 180;
+        else if (range === '24h') binSizeSeconds = 600;
+        else if (range === 'custom') {
+          const startVal = $('start').value;
+          const endVal = $('end').value;
+          if (startVal && endVal) {
+            const diffMs = new Date(endVal) - new Date(startVal);
+            binSizeSeconds = Math.max(10, Math.floor(diffMs / (150 * 1000)));
+          }
         }
+        
+        let autoStr = binSizeSeconds + 's';
+        if (binSizeSeconds >= 3600) {
+          autoStr = (binSizeSeconds / 3600).toFixed(1) + 'h';
+        } else if (binSizeSeconds >= 60) {
+          autoStr = (binSizeSeconds / 60).toFixed(1) + 'm';
+        }
+        $('binSizeMeta').textContent = `(Auto: ${autoStr})`;
+      } else if (binSel === 'custom') {
+        const customVal = parseInt($('customBinVal').value);
+        binSizeSeconds = !isNaN(customVal) && customVal > 0 ? customVal : 60;
+        $('binSizeMeta').textContent = '(Custom)';
+      } else {
+        binSizeSeconds = parseInt(binSel);
+        $('binSizeMeta').textContent = '';
       }
 
-      if (xData.length === 0) {
+      // 2. Perform aggregation
+      const aggregated = aggregateData(historyDataset, binSizeSeconds);
+
+      if (aggregated.length === 0) {
         target.innerHTML = '<div style="color: var(--text-sub); text-align: center; line-height: 500px; font-size: 13px;">No parseable history data.</div>';
         return;
       }
 
-      const data = [xData, tempYData, humYData, presYData];
+      const xData = [];
+      const tempMin = [];
+      const tempMax = [];
+      const tempAvg = [];
+      const humMin = [];
+      const humMax = [];
+      const humAvg = [];
+      const presMin = [];
+      const presMax = [];
+      const presAvg = [];
+
+      for (let i = 0; i < aggregated.length; i++) {
+        const pt = aggregated[i];
+        xData.push(pt.ts);
+        tempMin.push(pt.temp.min);
+        tempMax.push(pt.temp.max);
+        tempAvg.push(pt.temp.avg);
+        humMin.push(pt.hum.min);
+        humMax.push(pt.hum.max);
+        humAvg.push(pt.hum.avg);
+        presMin.push(pt.pres.min);
+        presMax.push(pt.pres.max);
+        presAvg.push(pt.pres.avg);
+      }
+
+      const data = [
+        xData,
+        tempMin, tempMax, tempAvg,
+        humMin, humMax, humAvg,
+        presMin, presMax, presAvg
+      ];
 
       const opts = {
         width: rect.width,
@@ -980,36 +1141,101 @@ void WebManager::handleRoot() {
           }
         },
         series: [
-          {},
+          {}, // x-axis
+          // Temperature
           {
             show: true,
             scale: 'temp',
-            spanGaps: false,
-            label: 'Temperature',
+            stroke: 'rgba(244, 63, 94, 0.5)',
+            width: 1,
+            points: { show: false },
+            label: 'Temp Min',
             value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' °C' : '--',
+          },
+          {
+            show: true,
+            scale: 'temp',
+            stroke: 'rgba(244, 63, 94, 0.5)',
+            width: 1,
+            points: { show: false },
+            label: 'Temp Max',
+            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' °C' : '--',
+          },
+          {
+            show: true,
+            scale: 'temp',
+            label: 'Temperature (Min/Max/Avg)',
+            value: (self, val, sIdx, dIdx) => formatAvgMinMax(self, val, sIdx, dIdx, '°C', 2),
             stroke: '#f43f5e',
             width: 2,
-            fill: 'rgba(244, 63, 94, 0.04)',
+          },
+          // Humidity
+          {
+            show: true,
+            scale: 'humidity',
+            stroke: 'rgba(6, 182, 212, 0.5)',
+            width: 1,
+            points: { show: false },
+            label: 'Hum Min',
+            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' %' : '--',
           },
           {
             show: true,
             scale: 'humidity',
-            spanGaps: false,
-            label: 'Humidity',
+            stroke: 'rgba(6, 182, 212, 0.5)',
+            width: 1,
+            points: { show: false },
+            label: 'Hum Max',
             value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' %' : '--',
+          },
+          {
+            show: true,
+            scale: 'humidity',
+            label: 'Humidity (Min/Max/Avg)',
+            value: (self, val, sIdx, dIdx) => formatAvgMinMax(self, val, sIdx, dIdx, '%', 2),
             stroke: '#06b6d4',
             width: 2,
-            fill: 'rgba(6, 182, 212, 0.04)',
+          },
+          // Pressure
+          {
+            show: true,
+            scale: 'pressure',
+            stroke: 'rgba(16, 185, 129, 0.5)',
+            width: 1,
+            points: { show: false },
+            label: 'Pres Min',
+            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(1) + ' hPa' : '--',
           },
           {
             show: true,
             scale: 'pressure',
-            spanGaps: false,
-            label: 'Pressure',
+            stroke: 'rgba(16, 185, 129, 0.5)',
+            width: 1,
+            points: { show: false },
+            label: 'Pres Max',
             value: (self, rawValue) => rawValue != null ? rawValue.toFixed(1) + ' hPa' : '--',
+          },
+          {
+            show: true,
+            scale: 'pressure',
+            label: 'Pressure (Min/Max/Avg)',
+            value: (self, val, sIdx, dIdx) => formatAvgMinMax(self, val, sIdx, dIdx, 'hPa', 1),
             stroke: '#10b981',
             width: 2,
-            fill: 'rgba(16, 185, 129, 0.04)',
+          }
+        ],
+        bands: [
+          {
+            series: [2, 1],
+            fill: 'rgba(244, 63, 94, 0.15)'
+          },
+          {
+            series: [5, 4],
+            fill: 'rgba(6, 182, 212, 0.15)'
+          },
+          {
+            series: [8, 7],
+            fill: 'rgba(16, 185, 129, 0.15)'
           }
         ],
         axes: [
@@ -1062,6 +1288,14 @@ void WebManager::handleRoot() {
 
       target.innerHTML = '';
       uplotInstance = new uPlot(opts, data, target);
+
+      // Hide Min and Max series from the default legend DOM
+      const legendRows = target.querySelectorAll('.u-legend tr');
+      legendRows.forEach((row, idx) => {
+        if (idx === 0 || idx === 1 || idx === 3 || idx === 4 || idx === 6 || idx === 7) {
+          row.style.display = 'none';
+        }
+      });
     }
 
     function renderBatteryChart(dataset) {
@@ -1689,6 +1923,18 @@ void WebManager::handleRoot() {
     $('btnLoad').addEventListener('click', loadHistory);
     $('btnDownloadCsv').addEventListener('click', downloadFilteredCSV);
     $('range').addEventListener('change', onRangeChanged);
+    $('binSize').addEventListener('change', () => {
+      const isCustom = $('binSize').value === 'custom';
+      $('customBinGroup').style.display = isCustom ? 'block' : 'none';
+      if (historyLoaded && historyDataset.length > 0) {
+        renderChart();
+      }
+    });
+    $('customBinVal').addEventListener('input', () => {
+      if (historyLoaded && historyDataset.length > 0) {
+        renderChart();
+      }
+    });
 
     (async function boot() {
       onRangeChanged();
