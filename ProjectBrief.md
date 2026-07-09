@@ -45,6 +45,17 @@ Complete.
 - log download support from the local web UI
 - OLED remains a compact status/readout screen rather than a history display
 
+### Milestone 2 status
+Complete.
+
+### Third milestone target (Milestone 3)
+- Over-The-Air (OTA) firmware update support
+- Physical signal and connection stability (soldering parts into a stack)
+- Battery diagnostics: use history logging to predict/identify charging vs. discharging state
+- Solar charging feasibility evaluation (assess if 4-6 hours of solar charging is sufficient)
+- System event logging to Serial and timestamp correction post-NTP sync
+- Continuously run long-term stability and soak testing
+
 ### Full project target
 All planned features run together with stable memory behavior on ESP8266.
 
@@ -219,3 +230,21 @@ All planned features run together with stable memory behavior on ESP8266.
 - Phase 2: Frontend layout and live/health/history views.
 - Phase 3: Runtime controls and settings persistence.
 - Phase 4: Robustness pass (errors, limits, soak test, memory profiling).
+
+## 9) Milestone 3 Design And Acceptance Criteria
+
+### 9.1 Design Objectives
+- Support remote Over-the-Air (OTA) firmware compilation/updates to avoid USB reconnection.
+- Solder parts into a clean stack rather than using temporary jumpers to resolve signal/power instability.
+- Predict and detect battery charge/discharge states by analyzing voltage characteristics over time.
+- Perform a technical evaluation of solar charging capability (checking if 4-6 hours of daily sunlight is sufficient to sustain operation).
+- Improve system diagnostics by redirecting key system transition events (API calls, NTP status changes, SD card flushes, and Wi-Fi transitions) to the Serial output.
+- Support NTP correction for logs saved during NTP-outage boot phases.
+
+### 9.2 Acceptance Criteria
+- **OTA Updates:** Able to flash new firmware remotely over Wi-Fi.
+- **Signal Stability:** Visual signal drops and I2C/SPI bus drops are eliminated by permanent soldering.
+- **Battery Prediction:** The web dashboard and prediction algorithms identify charging vs. discharging state based on voltage slope trends.
+- **Solar Feasibility Study:** Document actual battery current draw and solar panel output to confirm charging viability.
+- **System Event Tracing:** High-level events appear on Serial with readable timestamps.
+- **Timestamp Retroactive Correction:** When NTP sync completes after a disconnected boot, the firmware corrects the estimated timestamps of already-written RAM/SD buffer logs.
