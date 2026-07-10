@@ -170,6 +170,7 @@ void AppCoordinator::refreshHealth(uint32_t nowMs) {
   health_.batteryPercent = batteryManager_.getPercent();
   health_.batteryStatus = batteryManager_.getStatus();
   health_.batteryTimeRemainingSeconds = batteryManager_.getTimeRemainingSeconds();
+  health_.batterySlope = batteryManager_.getSlope();
 }
 
 void AppCoordinator::setupOta() {

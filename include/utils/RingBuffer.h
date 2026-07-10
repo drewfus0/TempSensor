@@ -50,6 +50,8 @@ class RingBuffer {
   }
 
   size_t size() const { return size_; }
+  T& operator[](size_t index) { return data_[(head_ + index) % Capacity]; }
+  const T& operator[](size_t index) const { return data_[(head_ + index) % Capacity]; }
   static constexpr size_t capacity() { return Capacity; }
   bool empty() const { return size_ == 0; }
   void clear() {

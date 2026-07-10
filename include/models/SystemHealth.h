@@ -17,4 +17,5 @@ struct SystemHealth {
   int batteryPercent = 0;
   const char* batteryStatus = "Unknown";
   int32_t batteryTimeRemainingSeconds = -1;
+  float batterySlope = 0.0f;
 };

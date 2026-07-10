@@ -2204,6 +2204,7 @@ void WebManager::handleHealthJson() {
     battery["percent"] = health_->batteryPercent;
     battery["status"] = health_->batteryStatus;
     battery["time_remaining"] = health_->batteryTimeRemainingSeconds;
+    battery["slope"] = health_->batterySlope;
     
     doc["has_health"] = true;
   } else {
