@@ -516,6 +516,9 @@ void LoggerManager::calibrateCsvFile(const char* filepath, time_t bootEpoch) {
   }
 
   String tempPath = String(filepath) + ".tmp";
+  if (SD.exists(tempPath)) {
+    SD.remove(tempPath);
+  }
   File outFile = SD.open(tempPath, "w");
   if (!outFile) {
     inFile.close();
@@ -581,7 +584,27 @@ void LoggerManager::calibrateCsvFile(const char* filepath, time_t bootEpoch) {
   inFile.close();
   outFile.close();
 
-  SD.remove(filepath);
-  SD.rename(tempPath, filepath);
+  // Copy temp file back to original file
+  File tempFile = SD.open(tempPath, "r");
+  if (!tempFile) {
+    return;
+  }
+
+  if (SD.exists(filepath)) {
+    SD.remove(filepath);
+  }
+  File origFile = SD.open(filepath, "w");
+  if (origFile) {
+    uint8_t copyBuf[256];
+    while (tempFile.available()) {
+      int bytesRead = tempFile.read(copyBuf, sizeof(copyBuf));
+      if (bytesRead <= 0) break;
+      origFile.write(copyBuf, bytesRead);
+    }
+    origFile.close();
+  }
+  tempFile.close();
+  SD.remove(tempPath);
+
   Serial.printf("[Logger] CSV file %s calibration finished. %u lines calibrated\n", filepath, calibratedCount);
 }

@@ -60,6 +60,10 @@ void AppCoordinator::begin() {
   timeManager_.getTimestamp(ts, sizeof(ts), quality);
   loggerManager_.logEvent("boot", ts, quality);
 
+  if (!timeManager_.isNtpSynced()) {
+    loggerManager_.logEvent("ntp_failed", ts, quality);
+  }
+
   Serial.println("[App] Startup complete");
 }
 

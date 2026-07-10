@@ -2317,8 +2317,13 @@ bool WebManager::parseEventRow(const String& line, String& outTs, String& outQua
     return false;
   }
 
+  String cleanLine = line;
+  if (cleanLine.endsWith("\r")) {
+    cleanLine.remove(cleanLine.length() - 1);
+  }
+
   char buf[160]{};
-  line.toCharArray(buf, sizeof(buf));
+  cleanLine.toCharArray(buf, sizeof(buf));
 
   char* save = nullptr;
   char* c0 = strtok_r(buf, ",", &save);
