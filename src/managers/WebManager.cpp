@@ -96,21 +96,28 @@ void WebManager::loop() {
 }
 
 void WebManager::registerRoutes() {
-  server_.on("/", [this]() { handleRoot(); });
-  server_.on("/sys/uplot.js", HTTP_GET, [this]() { handleLocalUPlotJs(); });
-  server_.on("/sys/uplot.css", HTTP_GET, [this]() { handleLocalUPlotCss(); });
-  server_.on("/api/live", [this]() { handleLiveJson(); });
-  server_.on("/api/health", [this]() { handleHealthJson(); });
-  server_.on("/api/config", HTTP_GET, [this]() { handleConfigGet(); });
-  server_.on("/api/config", HTTP_POST, [this]() { handleConfigPost(); });
-  server_.on("/api/history", HTTP_GET, [this]() { handleHistoryJson(); });
-  server_.on("/api/events", HTTP_GET, [this]() { handleEventsJson(); });
-  server_.on("/api/logs", HTTP_GET, [this]() { handleLogsJson(); });
-  server_.on("/api/logs/download", HTTP_GET, [this]() { handleLogDownload(); });
-  server_.on("/api/sd-tree", [this]() { handleSdTreeText(); });
-  server_.on("/api/action/flush-now", HTTP_POST, [this]() { handleFlushNow(); });
-  server_.on("/api/action/ntp-retry", HTTP_POST, [this]() { handleNtpRetry(); });
-  server_.on("/api/update", HTTP_POST, [this]() { handleOtaUpdatePost(); }, [this]() { handleOtaUpdateUpload(); });
+  server_.on("/", [this]() { logRequest(); handleRoot(); });
+  server_.on("/sys/uplot.js", HTTP_GET, [this]() { logRequest(); handleLocalUPlotJs(); });
+  server_.on("/sys/uplot.css", HTTP_GET, [this]() { logRequest(); handleLocalUPlotCss(); });
+  server_.on("/api/live", [this]() { logRequest(); handleLiveJson(); });
+  server_.on("/api/health", [this]() { logRequest(); handleHealthJson(); });
+  server_.on("/api/config", HTTP_GET, [this]() { logRequest(); handleConfigGet(); });
+  server_.on("/api/config", HTTP_POST, [this]() { logRequest(); handleConfigPost(); });
+  server_.on("/api/history", HTTP_GET, [this]() { logRequest(); handleHistoryJson(); });
+  server_.on("/api/events", HTTP_GET, [this]() { logRequest(); handleEventsJson(); });
+  server_.on("/api/logs", HTTP_GET, [this]() { logRequest(); handleLogsJson(); });
+  server_.on("/api/logs/download", HTTP_GET, [this]() { logRequest(); handleLogDownload(); });
+  server_.on("/api/sd-tree", [this]() { logRequest(); handleSdTreeText(); });
+  server_.on("/api/action/flush-now", HTTP_POST, [this]() { logRequest(); handleFlushNow(); });
+  server_.on("/api/action/ntp-retry", HTTP_POST, [this]() { logRequest(); handleNtpRetry(); });
+  server_.on("/api/update", HTTP_POST, [this]() { logRequest(); handleOtaUpdatePost(); }, [this]() { handleOtaUpdateUpload(); });
+}
+
+void WebManager::logRequest() {
+  Serial.printf("[Web] %s %s from %s\n",
+                (server_.method() == HTTP_GET) ? "GET" : "POST",
+                server_.uri().c_str(),
+                server_.client().remoteIP().toString().c_str());
 }
 
 void WebManager::handleRoot() {

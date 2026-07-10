@@ -17,6 +17,7 @@ class LoggerManager {
   bool flushIfDue(uint32_t nowMs, uint32_t flushIntervalMs);
   bool logEvent(const char* eventName, const char* timestamp, TimestampQuality quality);
   bool logBattery(const char* timestamp, float voltage, int percent, const char* status);
+  bool calibrateEstimatedLogs(time_t bootEpoch);
 
   bool forceRetry();
   bool attemptRecovery();
@@ -33,6 +34,7 @@ class LoggerManager {
   bool ensureDir(const char* path);
   bool writeCsvHeaderIfMissing();
   bool writeEventHeaderIfMissing();
+  void calibrateCsvFile(const char* filepath, time_t bootEpoch);
 
   RingBuffer<Sample, AppConfig::MAX_LOG_QUEUE_SIZE> queue_;
   bool sdHealthy_ = false;

@@ -94,6 +94,9 @@ bool LoggerManager::flush() {
     return false;
   }
 
+  const size_t initialSize = queue_.size();
+  Serial.printf("[Logger] Flushing %u samples to SD card...\n", initialSize);
+
   bool allWritten = true;
   while (!queue_.empty()) {
     Sample sample;
@@ -219,6 +222,12 @@ bool LoggerManager::flush() {
     file.close();
     Sample unused;
     queue_.pop(unused);
+  }
+
+  if (allWritten) {
+    Serial.printf("[Logger] Flush successful: %u samples written to SD card\n", initialSize);
+  } else {
+    Serial.println("[Logger] Flush failed or incomplete");
   }
 
   return allWritten;
@@ -394,4 +403,185 @@ bool LoggerManager::logBattery(const char* timestamp, float voltage, int percent
   }
 
   return true;
+}
+
+bool LoggerManager::calibrateEstimatedLogs(time_t bootEpoch) {
+  if (bootEpoch == 0) {
+    return false;
+  }
+
+  Serial.printf("[Logger] Calibrating estimated logs with boot epoch %lld\n", (long long)bootEpoch);
+
+  // 1. Calibrate in-memory queue
+  size_t qSize = queue_.size();
+  for (size_t i = 0; i < qSize; ++i) {
+    Sample& sample = queue_[i];
+    if (sample.quality == TimestampQuality::Estimated) {
+      time_t sampleEpoch = bootEpoch + sample.uptimeSeconds;
+      struct tm timeInfo;
+      localtime_r(&sampleEpoch, &timeInfo);
+      strftime(sample.timestamp, sizeof(sample.timestamp), "%Y-%m-%d %H:%M:%S", &timeInfo);
+      sample.quality = TimestampQuality::Ntp;
+    }
+  }
+  Serial.println("[Logger] Calibrated in-memory queue");
+
+  if (!sdHealthy_) {
+    return false;
+  }
+
+  // 2. Calibrate /logs/estimated.bin and write to daily files
+  if (SD.exists("/logs/estimated.bin")) {
+    File estFile = SD.open("/logs/estimated.bin", "r");
+    if (estFile) {
+      Serial.println("[Logger] Found /logs/estimated.bin, moving records...");
+      uint32_t movedCount = 0;
+      while (estFile.available() >= (int)sizeof(LogRecord)) {
+        LogRecord record;
+        if (estFile.read(reinterpret_cast<uint8_t*>(&record), sizeof(LogRecord)) != sizeof(LogRecord)) {
+          break;
+        }
+
+        time_t recordEpoch = bootEpoch + record.uptimeSeconds;
+        struct tm timeInfo;
+        localtime_r(&recordEpoch, &timeInfo);
+
+        char dateStr[16];
+        strftime(dateStr, sizeof(dateStr), "%Y-%m-%d", &timeInfo);
+
+        uint32_t slotIndex = timeInfo.tm_hour * 3600 + timeInfo.tm_min * 60 + timeInfo.tm_sec;
+        if (slotIndex >= 86400) {
+          continue;
+        }
+
+        String filepath = "/logs/" + String(dateStr) + ".bin";
+        bool exists = SD.exists(filepath);
+        if (exists) {
+          File checkFile = SD.open(filepath, "r");
+          if (checkFile) {
+            if (checkFile.size() != 86400 * sizeof(LogRecord)) {
+              exists = false;
+            }
+            checkFile.close();
+          } else {
+            exists = false;
+          }
+        }
+
+        File dailyFile;
+        if (!exists) {
+          if (SD.exists(filepath)) {
+            SD.remove(filepath);
+          }
+          dailyFile = SD.open(filepath, "w+");
+          if (dailyFile) {
+            preAllocateDailyFile(dailyFile);
+          }
+        } else {
+          dailyFile = SD.open(filepath, "r+");
+        }
+
+        if (dailyFile) {
+          record.quality = 0; // Set to Ntp (0)
+          uint32_t byteOffset = slotIndex * sizeof(LogRecord);
+          dailyFile.seek(byteOffset);
+          dailyFile.write(reinterpret_cast<const uint8_t*>(&record), sizeof(LogRecord));
+          dailyFile.close();
+          movedCount++;
+        }
+      }
+      estFile.close();
+      SD.remove("/logs/estimated.bin");
+      Serial.printf("[Logger] Calibrated and moved %u records from estimated.bin to daily files\n", movedCount);
+    }
+  }
+
+  // 3. Calibrate /logs/events.csv
+  calibrateCsvFile(AppConfig::EVENT_FILE_PATH, bootEpoch);
+
+  // 4. Calibrate /logs/battery.csv
+  calibrateCsvFile("/logs/battery.csv", bootEpoch);
+
+  return true;
+}
+
+void LoggerManager::calibrateCsvFile(const char* filepath, time_t bootEpoch) {
+  if (!SD.exists(filepath)) {
+    return;
+  }
+
+  File inFile = SD.open(filepath, "r");
+  if (!inFile) {
+    return;
+  }
+
+  String tempPath = String(filepath) + ".tmp";
+  File outFile = SD.open(tempPath, "w");
+  if (!outFile) {
+    inFile.close();
+    return;
+  }
+
+  Serial.printf("[Logger] Calibrating CSV file %s...\n", filepath);
+
+  bool isHeader = true;
+  uint32_t calibratedCount = 0;
+
+  while (inFile.available()) {
+    String line = inFile.readStringUntil('\n');
+    if (line.length() == 0) {
+      continue;
+    }
+
+    if (line.endsWith("\r")) {
+      line.remove(line.length() - 1);
+    }
+
+    if (isHeader) {
+      outFile.println(line);
+      isHeader = false;
+      continue;
+    }
+
+    if (line.startsWith("uptime+")) {
+      int commaIdx = line.indexOf(',');
+      if (commaIdx != -1) {
+        String tsPart = line.substring(7, commaIdx - 1); // Extract uptime seconds part
+        uint32_t uptimeSec = tsPart.toInt();
+        time_t realEpoch = bootEpoch + uptimeSec;
+
+        struct tm timeInfo;
+        localtime_r(&realEpoch, &timeInfo);
+        char realTs[24];
+        strftime(realTs, sizeof(realTs), "%Y-%m-%d %H:%M:%S", &timeInfo);
+
+        int secondCommaIdx = line.indexOf(',', commaIdx + 1);
+        String remaining;
+        if (secondCommaIdx != -1) {
+          String qualityField = line.substring(commaIdx + 1, secondCommaIdx);
+          if (qualityField == "estimated") {
+            remaining = ",ntp" + line.substring(secondCommaIdx);
+          } else {
+            remaining = line.substring(commaIdx);
+          }
+        } else {
+          remaining = line.substring(commaIdx);
+        }
+
+        outFile.print(realTs);
+        outFile.println(remaining);
+        calibratedCount++;
+        continue;
+      }
+    }
+
+    outFile.println(line);
+  }
+
+  inFile.close();
+  outFile.close();
+
+  SD.remove(filepath);
+  SD.rename(tempPath, filepath);
+  Serial.printf("[Logger] CSV file %s calibration finished. %u lines calibrated\n", filepath, calibratedCount);
 }

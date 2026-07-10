@@ -42,6 +42,7 @@ class WebManager {
   void handleNtpRetry();
   void handleOtaUpdatePost();
   void handleOtaUpdateUpload();
+  void logRequest();
   void appendSdTree(File entry, String& out, uint8_t depth);
   void appendIndent(String& out, uint8_t depth);
 

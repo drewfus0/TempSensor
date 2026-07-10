@@ -52,6 +52,14 @@ void AppCoordinator::begin() {
   }
 
   refreshHealth(millis());
+
+  // Initialize connection state and log boot event
+  lastWifiConnected_ = wifiConnected;
+  char ts[32]{};
+  TimestampQuality quality = TimestampQuality::Estimated;
+  timeManager_.getTimestamp(ts, sizeof(ts), quality);
+  loggerManager_.logEvent("boot", ts, quality);
+
   Serial.println("[App] Startup complete");
 }
 
@@ -60,12 +68,32 @@ void AppCoordinator::loop() {
 
   timeManager_.update(nowMs, AppConfig::NTP_RETRY_INTERVAL_MS);
   batteryManager_.update(nowMs);
+
+  // Check for WiFi connection transitions
+  const bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+  if (wifiConnected != lastWifiConnected_) {
+    lastWifiConnected_ = wifiConnected;
+    char ts[32]{};
+    TimestampQuality quality = TimestampQuality::Estimated;
+    timeManager_.getTimestamp(ts, sizeof(ts), quality);
+    if (wifiConnected) {
+      Serial.printf("[WiFi] Connected, IP: %s\n", WiFi.localIP().toString().c_str());
+      loggerManager_.logEvent("wifi_connected", ts, quality);
+    } else {
+      Serial.println("[WiFi] Connection lost (Disconnected)");
+      loggerManager_.logEvent("wifi_disconnected", ts, quality);
+    }
+  }
+
   if (timeManager_.consumeNtpReestablishedFlag()) {
     char ts[32]{};
     TimestampQuality quality = TimestampQuality::Estimated;
     timeManager_.getTimestamp(ts, sizeof(ts), quality);
     loggerManager_.logEvent("ntp_reestablished", ts, quality);
     Serial.println("[Time] NTP re-established");
+
+    // Calibrate all logs
+    loggerManager_.calibrateEstimatedLogs(timeManager_.getBootEpoch());
   }
 
   handleSampling(nowMs);

@@ -18,9 +18,15 @@ void TimeManager::update(uint32_t nowMs, uint32_t ntpRetryIntervalMs) {
   lastSyncAttemptMs_ = nowMs;
 
   const bool hadSync = ntpSynced_;
+  Serial.println("[Time] Attempting NTP time synchronization...");
   ntpSynced_ = trySyncTime();
-  if (!hadSync && ntpSynced_) {
-    ntpReestablished_ = true;
+  if (ntpSynced_) {
+    if (!hadSync) {
+      ntpReestablished_ = true;
+      Serial.println("[Time] NTP sync SUCCESSFUL");
+    }
+  } else {
+    Serial.println("[Time] NTP sync FAILED, will retry later");
   }
 }
 
@@ -59,4 +65,13 @@ void TimeManager::formatEpoch(time_t epochSeconds, char* out, size_t outSize) co
   struct tm timeInfo;
   localtime_r(&epochSeconds, &timeInfo);
   strftime(out, outSize, "%Y-%m-%d %H:%M:%S", &timeInfo);
+}
+
+time_t TimeManager::getBootEpoch() const {
+  if (!ntpSynced_) {
+    return 0;
+  }
+  time_t nowEpoch = 0;
+  time(&nowEpoch);
+  return nowEpoch - (millis() / 1000);
 }

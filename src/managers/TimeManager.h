@@ -10,6 +10,7 @@ class TimeManager {
   void update(uint32_t nowMs, uint32_t ntpRetryIntervalMs);
   void getTimestamp(char* out, size_t outSize, TimestampQuality& quality) const;
   bool isNtpSynced() const { return ntpSynced_; }
+  time_t getBootEpoch() const;
   bool consumeNtpReestablishedFlag();
   void forceNtpRetry();
 
