@@ -239,7 +239,8 @@ All planned features run together with stable memory behavior on ESP8266.
 - Predict and detect battery charge/discharge states by analyzing voltage characteristics over time.
 - Perform a technical evaluation of solar charging capability (checking if 4-6 hours of daily sunlight is sufficient to sustain operation).
 - Improve system diagnostics by redirecting key system transition events (API calls, NTP status changes, SD card flushes, and Wi-Fi transitions) to the Serial output.
-- Support NTP correction for logs saved during NTP-outage boot phases.
+- Log boot times, NTP, SD card, and WiFi events/errors to the event file.
+- Support NTP correction for all logs (including event files and daily binary files) saved during NTP-outage boot phases.
 
 ### 9.2 Acceptance Criteria
 - **OTA Updates:** Able to flash new firmware remotely over Wi-Fi.
@@ -247,4 +248,4 @@ All planned features run together with stable memory behavior on ESP8266.
 - **Battery Prediction:** The web dashboard and prediction algorithms identify charging vs. discharging state based on voltage slope trends.
 - **Solar Feasibility Study:** Document actual battery current draw and solar panel output to confirm charging viability.
 - **System Event Tracing:** High-level events appear on Serial with readable timestamps.
-- **Timestamp Retroactive Correction:** When NTP sync completes after a disconnected boot, the firmware corrects the estimated timestamps of already-written RAM/SD buffer logs.
+- **Timestamp Retroactive Correction:** When NTP sync completes after a disconnected boot, the firmware retroactively corrects the estimated timestamps of all written daily logs and event files.
