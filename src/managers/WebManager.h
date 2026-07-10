@@ -8,10 +8,11 @@
 
 class LoggerManager;
 class TimeManager;
+class DisplayManager;
 
 class WebManager {
  public:
-  bool begin(const char* ssid, const char* password, const char* hostname, LoggerManager* logger = nullptr, TimeManager* time = nullptr);
+  bool begin(const char* ssid, const char* password, const char* hostname, LoggerManager* logger = nullptr, TimeManager* time = nullptr, DisplayManager* display = nullptr);
   void loop();
 
   void setLatestSample(const Sample* sample) { latestSample_ = sample; }
@@ -39,6 +40,8 @@ class WebManager {
   void handleSdTreeText();
   void handleFlushNow();
   void handleNtpRetry();
+  void handleOtaUpdatePost();
+  void handleOtaUpdateUpload();
   void appendSdTree(File entry, String& out, uint8_t depth);
   void appendIndent(String& out, uint8_t depth);
 
@@ -55,6 +58,7 @@ class WebManager {
   const SystemHealth* health_ = nullptr;
   LoggerManager* loggerManager_ = nullptr;
   TimeManager* timeManager_ = nullptr;
+  DisplayManager* displayManager_ = nullptr;
   YieldCallback yieldCallback_ = nullptr;
   void* yieldCallbackArg_ = nullptr;
 };

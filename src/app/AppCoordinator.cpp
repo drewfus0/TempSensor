@@ -2,6 +2,7 @@
 
 #include <ESP8266WiFi.h>
 #include <SPI.h>
+#include <ArduinoOTA.h>
 
 void AppCoordinator::begin() {
   Serial.println("\n[App] Booting TempSensor milestone-1 firmware...");
@@ -27,7 +28,7 @@ void AppCoordinator::begin() {
       AppConfig::SD_CS_PIN, AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
   displayManager_.showStartupStatus("SD", sdOk ? "Ready" : "Init failed", loggerManager_.getSdDiagDetail(), !sdOk);
 
-  webManager_.begin(AppConfig::WIFI_SSID, AppConfig::WIFI_PASSWORD, AppConfig::HOSTNAME, &loggerManager_, &timeManager_);
+  webManager_.begin(AppConfig::WIFI_SSID, AppConfig::WIFI_PASSWORD, AppConfig::HOSTNAME, &loggerManager_, &timeManager_, &displayManager_);
   webManager_.registerYieldCallback([](void* arg) {
     auto* self = static_cast<AppCoordinator*>(arg);
     self->handleSampling(millis());
@@ -80,6 +81,13 @@ void AppCoordinator::loop() {
     TimestampQuality quality = TimestampQuality::Estimated;
     timeManager_.getTimestamp(ts, sizeof(ts), quality);
     loggerManager_.logBattery(ts, batteryManager_.getVoltage(), batteryManager_.getPercent(), batteryManager_.getStatus());
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!otaInitialized_) {
+      setupOta();
+    }
+    ArduinoOTA.handle();
   }
 
   webManager_.loop();
@@ -162,4 +170,46 @@ void AppCoordinator::refreshHealth(uint32_t nowMs) {
   health_.batteryPercent = batteryManager_.getPercent();
   health_.batteryStatus = batteryManager_.getStatus();
   health_.batteryTimeRemainingSeconds = batteryManager_.getTimeRemainingSeconds();
+}
+
+void AppCoordinator::setupOta() {
+  ArduinoOTA.setHostname(AppConfig::HOSTNAME);
+
+  ArduinoOTA.onStart([this]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_FS
+      type = "filesystem";
+    }
+    Serial.println("\n[OTA] ArduinoOTA Start: " + type);
+    displayManager_.showStartupStatus("OTA UDP", "Flashing...", type.c_str());
+  });
+
+  ArduinoOTA.onEnd([this]() {
+    Serial.println("\n[OTA] ArduinoOTA Success");
+    displayManager_.showStartupStatus("OTA UDP", "Success", "Rebooting...");
+  });
+
+  ArduinoOTA.onProgress([this](unsigned int progress, unsigned int total) {
+    displayManager_.showOtaProgress(progress, total);
+    Serial.print(".");
+  });
+
+  ArduinoOTA.onError([this](ota_error_t error) {
+    Serial.printf("\n[OTA] ArduinoOTA Error[%u]: ", error);
+    const char* errStr = "Unknown";
+    if (error == OTA_AUTH_ERROR) errStr = "Auth Failed";
+    else if (error == OTA_BEGIN_ERROR) errStr = "Begin Failed";
+    else if (error == OTA_CONNECT_ERROR) errStr = "Connect Failed";
+    else if (error == OTA_RECEIVE_ERROR) errStr = "Receive Failed";
+    else if (error == OTA_END_ERROR) errStr = "End Failed";
+
+    Serial.println(errStr);
+    displayManager_.showStartupStatus("OTA UDP", "Failed", errStr, true);
+  });
+
+  ArduinoOTA.begin();
+  otaInitialized_ = true;
+  Serial.println("[OTA] ArduinoOTA service initialized");
 }

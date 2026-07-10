@@ -21,6 +21,7 @@ class AppCoordinator {
   void handleDisplayRefresh(uint32_t nowMs);
   void handleDiagnostics(uint32_t nowMs);
   void refreshHealth(uint32_t nowMs);
+  void setupOta();
 
   SensorManager sensorManager_;
   TimeManager timeManager_;
@@ -38,4 +39,5 @@ class AppCoordinator {
   uint32_t lastDisplayMs_ = 0;
   uint32_t lastDiagMs_ = 0;
   uint32_t lastBatteryLogMs_ = 0;
+  bool otaInitialized_ = false;
 };

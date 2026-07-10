@@ -310,3 +310,35 @@ void DisplayManager::renderLatest(const Sample& sample,
 
   display.display();
 }
+
+void DisplayManager::showOtaProgress(unsigned int progress, unsigned int total) {
+  if (!ready_) {
+    return;
+  }
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setFont();
+  display.setTextColor(WHITE);
+  display.setTextWrap(false);
+  display.setCursor(0, 0);
+
+  display.println("OTA Update");
+  display.println("Flashing...");
+
+  int percent = 0;
+  if (total > 0) {
+    percent = (progress * 100) / total;
+  }
+  display.printf("Pct: %d%%\n", percent);
+
+  // Draw progress bar
+  display.drawRect(2, 32, display.width() - 4, 8, WHITE);
+  if (percent > 0) {
+    int fillWidth = (percent * (display.width() - 8)) / 100;
+    display.fillRect(4, 34, fillWidth, 4, WHITE);
+  }
+
+  display.display();
+}
+

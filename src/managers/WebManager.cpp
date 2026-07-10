@@ -7,6 +7,7 @@
 #include "config/AppConfig.h"
 #include "managers/LoggerManager.h"
 #include "managers/TimeManager.h"
+#include "managers/DisplayManager.h"
 #include "web/uplot_assets.h"
 
 namespace {
@@ -58,9 +59,13 @@ class FastLineReader {
 
 }  // namespace
 
-bool WebManager::begin(const char* ssid, const char* password, const char* hostname, LoggerManager* logger, TimeManager* time) {
+bool WebManager::begin(const char* ssid, const char* password, const char* hostname, LoggerManager* logger, TimeManager* time, DisplayManager* display) {
   loggerManager_ = logger;
   timeManager_ = time;
+  displayManager_ = display;
+
+  // Collect headers for Content-Length to display OTA progress
+  server_.collectHeaders("Content-Length");
 
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(hostname);
@@ -105,6 +110,7 @@ void WebManager::registerRoutes() {
   server_.on("/api/sd-tree", [this]() { handleSdTreeText(); });
   server_.on("/api/action/flush-now", HTTP_POST, [this]() { handleFlushNow(); });
   server_.on("/api/action/ntp-retry", HTTP_POST, [this]() { handleNtpRetry(); });
+  server_.on("/api/update", HTTP_POST, [this]() { handleOtaUpdatePost(); }, [this]() { handleOtaUpdateUpload(); });
 }
 
 void WebManager::handleRoot() {
@@ -773,6 +779,28 @@ void WebManager::handleRoot() {
             <button class='btn-secondary' id='btnNtp' title='Force immediate NTP time sync attempt'>Sync NTP</button>
           </div>
           <div class='alert-banner' id='actionAlert'></div>
+        </section>
+
+        <section class='card'>
+          <h2>Firmware Update (OTA)</h2>
+          <div class='form-group'>
+            <label>Select Firmware Binary (.bin)</label>
+            <input type='file' id='otaFile' accept='.bin' style='display: none;'>
+            <div id='otaDragDrop' style='border: 2px dashed var(--border); padding: 20px; text-align: center; border-radius: 6px; cursor: pointer; background: rgba(255,255,255,0.02); transition: all 0.2s; margin-top: 8px;'>
+              <span id='otaDragText'>Drag & drop or click to select file</span>
+            </div>
+          </div>
+          <div id='otaProgressContainer' style='display: none; margin-top: 15px;'>
+            <div style='display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px;'>
+              <span id='otaStatus'>Uploading...</span>
+              <span id='otaPercent'>0%</span>
+            </div>
+            <div style='background: rgba(255,255,255,0.1); height: 10px; border-radius: 5px; overflow: hidden;'>
+              <div id='otaProgressBar' style='background: var(--accent); width: 0%; height: 100%; transition: width 0.1s; border-radius: 5px;'></div>
+            </div>
+          </div>
+          <button id='btnStartOta' style='margin-top: 15px; width: 100%;' disabled>Flash Firmware</button>
+          <div class='alert-banner' id='otaAlert' style='margin-top: 10px;'></div>
         </section>
       </div>
 
@@ -1936,6 +1964,147 @@ void WebManager::handleRoot() {
       }
     });
 
+    // OTA File Upload Handler
+    const otaFile = $('otaFile');
+    const otaDragDrop = $('otaDragDrop');
+    const otaDragText = $('otaDragText');
+    const btnStartOta = $('btnStartOta');
+    const otaProgressContainer = $('otaProgressContainer');
+    const otaProgressBar = $('otaProgressBar');
+    const otaPercent = $('otaPercent');
+    const otaStatus = $('otaStatus');
+    const otaAlert = $('otaAlert');
+    let selectedOtaFile = null;
+
+    otaDragDrop.addEventListener('click', () => otaFile.click());
+
+    otaDragDrop.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      otaDragDrop.style.borderColor = 'var(--accent)';
+      otaDragDrop.style.background = 'rgba(6, 182, 212, 0.05)';
+    });
+
+    otaDragDrop.addEventListener('dragleave', () => {
+      otaDragDrop.style.borderColor = 'var(--border)';
+      otaDragDrop.style.background = 'rgba(255, 255, 255, 0.02)';
+    });
+
+    otaDragDrop.addEventListener('drop', (e) => {
+      e.preventDefault();
+      otaDragDrop.style.borderColor = 'var(--border)';
+      otaDragDrop.style.background = 'rgba(255, 255, 255, 0.02)';
+      if (e.dataTransfer.files.length > 0) {
+        handleOtaFileSelect(e.dataTransfer.files[0]);
+      }
+    });
+
+    otaFile.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        handleOtaFileSelect(e.target.files[0]);
+      }
+    });
+
+    function handleOtaFileSelect(file) {
+      if (!file.name.endsWith('.bin')) {
+        showOtaAlert('Only .bin firmware files are supported.', 'error');
+        selectedOtaFile = null;
+        btnStartOta.disabled = true;
+        otaDragText.textContent = 'Drag & drop or click to select file';
+        return;
+      }
+      selectedOtaFile = file;
+      otaDragText.innerHTML = `<strong>Selected:</strong> ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+      btnStartOta.disabled = false;
+      otaAlert.style.display = 'none';
+    }
+
+    function showOtaAlert(msg, type) {
+      otaAlert.style.display = 'block';
+      otaAlert.textContent = msg;
+      otaAlert.className = 'alert-banner ' + type;
+    }
+
+    function resetOtaUI() {
+      btnStartOta.disabled = false;
+      otaDragDrop.style.pointerEvents = 'auto';
+      selectedOtaFile = null;
+      otaDragText.textContent = 'Drag & drop or click to select file';
+      otaFile.value = '';
+    }
+
+    function startRebootCountdown() {
+      let count = 10;
+      otaDragText.textContent = 'Device is rebooting. Reconnecting...';
+      const timer = setInterval(() => {
+        count--;
+        if (count <= 0) {
+          clearInterval(timer);
+          window.location.reload();
+        } else {
+          otaStatus.textContent = `Reconnecting in ${count}s...`;
+        }
+      }, 1000);
+    }
+
+    btnStartOta.addEventListener('click', () => {
+      if (!selectedOtaFile) return;
+
+      btnStartOta.disabled = true;
+      otaDragDrop.style.pointerEvents = 'none';
+      otaProgressContainer.style.display = 'block';
+      otaStatus.textContent = 'Uploading...';
+      otaPercent.textContent = '0%';
+      otaProgressBar.style.width = '0%';
+      otaAlert.style.display = 'none';
+
+      const formData = new FormData();
+      formData.append('update', selectedOtaFile);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/update', true);
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          otaProgressBar.style.width = percent + '%';
+          otaPercent.textContent = percent + '%';
+          if (percent === 100) {
+            otaStatus.textContent = 'Flashing...';
+          }
+        }
+      });
+
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          try {
+            const res = JSON.parse(xhr.responseText);
+            if (res.success) {
+              showOtaAlert(res.message, 'success');
+              otaStatus.textContent = 'Rebooting...';
+              startRebootCountdown();
+            } else {
+              showOtaAlert(res.message || 'OTA update failed', 'error');
+              resetOtaUI();
+            }
+          } catch (e) {
+            showOtaAlert('Firmware flashed. Rebooting...', 'success');
+            otaStatus.textContent = 'Rebooting...';
+            startRebootCountdown();
+          }
+        } else {
+          showOtaAlert('Upload failed. Server status: ' + xhr.status, 'error');
+          resetOtaUI();
+        }
+      };
+
+      xhr.onerror = () => {
+        showOtaAlert('Network error occurred during update.', 'error');
+        resetOtaUI();
+      };
+
+      xhr.send(formData);
+    });
+
     (async function boot() {
       onRangeChanged();
       await loadConfig();
@@ -2547,3 +2716,62 @@ void WebManager::handleNtpRetry() {
   serializeJson(doc, response);
   server_.send(200, "application/json", response);
 }
+
+void WebManager::handleOtaUpdatePost() {
+  server_.sendHeader("Connection", "close");
+  StaticJsonDocument<128> doc;
+  if (Update.hasError()) {
+    doc["success"] = false;
+    doc["message"] = "Firmware update failed";
+  } else {
+    doc["success"] = true;
+    doc["message"] = "Firmware update successful! Rebooting...";
+  }
+  String response;
+  serializeJson(doc, response);
+  server_.send(200, "application/json", response);
+
+  delay(100);
+  ESP.restart();
+}
+
+void WebManager::handleOtaUpdateUpload() {
+  HTTPUpload& upload = server_.upload();
+  static uint32_t totalLength = 0;
+
+  if (upload.status == UPLOAD_FILE_START) {
+    totalLength = server_.header("Content-Length").toInt();
+    Serial.printf("\n[OTA] Web Update Start: %s (Expected Total: %u bytes)\n", upload.filename.c_str(), totalLength);
+    if (displayManager_) {
+      displayManager_->showStartupStatus("OTA Web", "Flashing...");
+    }
+    
+    // Use maximum available sketch space
+    uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+    if (!Update.begin(maxSketchSpace)) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      Update.printError(Serial);
+    } else {
+      if (displayManager_ && totalLength > 0) {
+        displayManager_->showOtaProgress(upload.totalSize, totalLength);
+      }
+      Serial.print(".");
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      Serial.printf("\n[OTA] Web Update Success: %u bytes\n", upload.totalSize);
+      if (displayManager_) {
+        displayManager_->showStartupStatus("OTA Web", "Success", "Rebooting...");
+      }
+    } else {
+      Update.printError(Serial);
+      if (displayManager_) {
+        displayManager_->showStartupStatus("OTA Web", "Failed", "Check logs", true);
+      }
+    }
+  }
+}
+
