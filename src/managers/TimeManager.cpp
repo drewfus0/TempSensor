@@ -75,3 +75,7 @@ time_t TimeManager::getBootEpoch() const {
   time(&nowEpoch);
   return nowEpoch - (millis() / 1000);
 }
+
+void TimeManager::setTimezone(const char* tz) {
+  configTzTime(tz, AppConfig::NTP_SERVER_1, AppConfig::NTP_SERVER_2);
+}

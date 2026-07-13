@@ -28,7 +28,9 @@ void AppCoordinator::begin() {
       AppConfig::SD_CS_PIN, AppConfig::SD_SCK_PIN, AppConfig::SD_MISO_PIN, AppConfig::SD_MOSI_PIN);
   displayManager_.showStartupStatus("SD", sdOk ? "Ready" : "Init failed", loggerManager_.getSdDiagDetail(), !sdOk);
 
-  webManager_.begin(AppConfig::WIFI_SSID, AppConfig::WIFI_PASSWORD, AppConfig::HOSTNAME, &loggerManager_, &timeManager_, &displayManager_);
+  initConfiguration();
+
+  webManager_.begin(&config_, &loggerManager_, &timeManager_, &displayManager_);
   webManager_.registerYieldCallback([](void* arg) {
     auto* self = static_cast<AppCoordinator*>(arg);
     self->handleSampling(millis());
@@ -39,6 +41,7 @@ void AppCoordinator::begin() {
   displayManager_.showStartupStatus("WiFi", wifiConnected ? "Connected" : "Not connected", wifiDetail.c_str());
 
   timeManager_.begin();
+  timeManager_.setTimezone(config_.timezone);
   displayManager_.showStartupStatus("NTP", timeManager_.isNtpSynced() ? "Synced" : "Estimated clock",
                                     nullptr, !timeManager_.isNtpSynced());
 
@@ -101,7 +104,7 @@ void AppCoordinator::loop() {
   }
 
   handleSampling(nowMs);
-  loggerManager_.flushIfDue(nowMs, AppConfig::LOG_FLUSH_INTERVAL_MS);
+  loggerManager_.flushIfDue(nowMs, config_.logFlushIntervalMs);
   handleDisplayRefresh(nowMs);
   handleDiagnostics(nowMs);
   refreshHealth(nowMs);
@@ -126,7 +129,7 @@ void AppCoordinator::loop() {
 }
 
 void AppCoordinator::handleSampling(uint32_t nowMs) {
-  if ((nowMs - lastSampleMs_) < AppConfig::SAMPLE_INTERVAL_MS) {
+  if ((nowMs - lastSampleMs_) < config_.sampleIntervalMs) {
     return;
   }
   lastSampleMs_ = nowMs;
@@ -160,7 +163,7 @@ void AppCoordinator::handleDisplayRefresh(uint32_t nowMs) {
   }
 
   if (lastDisplayMs_ != 0 &&
-      (nowMs - lastDisplayMs_) < AppConfig::DISPLAY_REFRESH_INTERVAL_MS) {
+      (nowMs - lastDisplayMs_) < config_.displayRefreshIntervalMs) {
     return;
   }
   lastDisplayMs_ = nowMs;
@@ -206,7 +209,7 @@ void AppCoordinator::refreshHealth(uint32_t nowMs) {
 }
 
 void AppCoordinator::setupOta() {
-  ArduinoOTA.setHostname(AppConfig::HOSTNAME);
+  ArduinoOTA.setHostname(config_.hostname);
 
   ArduinoOTA.onStart([this]() {
     String type;
@@ -245,4 +248,26 @@ void AppCoordinator::setupOta() {
   ArduinoOTA.begin();
   otaInitialized_ = true;
   Serial.println("[OTA] ArduinoOTA service initialized");
+}
+
+void AppCoordinator::initConfiguration() {
+  Serial.println("[Config] Initializing configuration...");
+  bool loadOk = loggerManager_.loadDeviceConfig(config_);
+  if (!loadOk) {
+    Serial.println("[Config] /config.json not found or invalid on SD card, creating defaults...");
+    // Populate with compile-time defaults from AppConfig
+    strncpy(config_.wifiSsid, AppConfig::WIFI_SSID, sizeof(config_.wifiSsid));
+    strncpy(config_.wifiPassword, AppConfig::WIFI_PASSWORD, sizeof(config_.wifiPassword));
+    strncpy(config_.hostname, AppConfig::HOSTNAME, sizeof(config_.hostname));
+    strncpy(config_.timezone, AppConfig::TIMEZONE_MELBOURNE, sizeof(config_.timezone));
+    config_.sampleIntervalMs = AppConfig::SAMPLE_INTERVAL_MS;
+    config_.logFlushIntervalMs = AppConfig::LOG_FLUSH_INTERVAL_MS;
+    config_.displayRefreshIntervalMs = AppConfig::DISPLAY_REFRESH_INTERVAL_MS;
+
+    // Save defaults to SD card if possible
+    loggerManager_.saveDeviceConfig(config_);
+  } else {
+    Serial.printf("[Config] Loaded settings from SD card. SSID: %s, Hostname: %s, Timezone: %s\n",
+                  config_.wifiSsid, config_.hostname, config_.timezone);
+  }
 }

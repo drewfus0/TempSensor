@@ -59,7 +59,8 @@ class FastLineReader {
 
 }  // namespace
 
-bool WebManager::begin(const char* ssid, const char* password, const char* hostname, LoggerManager* logger, TimeManager* time, DisplayManager* display) {
+bool WebManager::begin(DeviceConfig* config, LoggerManager* logger, TimeManager* time, DisplayManager* display) {
+  config_ = config;
   loggerManager_ = logger;
   timeManager_ = time;
   displayManager_ = display;
@@ -68,10 +69,10 @@ bool WebManager::begin(const char* ssid, const char* password, const char* hostn
   server_.collectHeaders("Content-Length");
 
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname(hostname);
-  WiFi.begin(ssid, password);
+  WiFi.setHostname(config_->hostname);
+  WiFi.begin(config_->wifiSsid, config_->wifiPassword);
 
-  Serial.printf("[WiFi] Connecting to %s", ssid);
+  Serial.printf("[WiFi] Connecting to %s", config_->wifiSsid);
   const uint32_t startMs = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - startMs) < 15000) {
     delay(250);
@@ -107,7 +108,9 @@ void WebManager::registerRoutes() {
   server_.on("/api/events", HTTP_GET, [this]() { logRequest(); handleEventsJson(); });
   server_.on("/api/logs", HTTP_GET, [this]() { logRequest(); handleLogsJson(); });
   server_.on("/api/logs/download", HTTP_GET, [this]() { logRequest(); handleLogDownload(); });
-  server_.on("/api/sd-tree", [this]() { logRequest(); handleSdTreeText(); });
+  server_.on("/api/logs/delete", HTTP_POST, [this]() { logRequest(); handleLogDelete(); });
+  server_.on("/api/logs/rename", HTTP_POST, [this]() { logRequest(); handleLogRename(); });
+  server_.on("/api/sd-tree", [this]() { logRequest(); handleSdTreeJson(); });
   server_.on("/api/action/flush-now", HTTP_POST, [this]() { logRequest(); handleFlushNow(); });
   server_.on("/api/action/ntp-retry", HTTP_POST, [this]() { logRequest(); handleNtpRetry(); });
   server_.on("/api/update", HTTP_POST, [this]() { logRequest(); handleOtaUpdatePost(); }, [this]() { handleOtaUpdateUpload(); });
@@ -655,11 +658,78 @@ void WebManager::handleRoot() {
       border-radius: 4px;
       transition: width 0.1s linear;
     }
-    .modal-percent {
+     .modal-percent {
       font-family: var(--font-mono);
       font-size: 0.85rem;
       font-weight: 600;
       color: var(--accent);
+    }
+    
+    /* Tab System Styles */
+    .tab-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 8px;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-sub);
+      font-family: var(--font-main);
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      padding: 6px 12px;
+      border-bottom: 2px solid transparent;
+      transition: color 0.2s ease, border-color 0.2s ease;
+    }
+    .tab-btn:hover {
+      color: var(--text);
+    }
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom: 2px solid var(--accent);
+    }
+    .tab-content {
+      display: none;
+      animation: fadeIn 0.3s ease;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    /* Config Form Styles */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      font-size: 0.85rem;
+      color: var(--text-sub);
+      font-weight: 500;
+    }
+    .form-control {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px;
+      color: var(--text);
+      font-family: var(--font-main);
+      font-size: 0.9rem;
+      width: 100%;
+      transition: border-color 0.2s;
+    }
+    .form-control:focus {
+      outline: none;
+      border-color: var(--accent);
     }
   </style>
 </head>
@@ -690,8 +760,15 @@ void WebManager::handleRoot() {
       </div>
     </div>
 
-    <div class='grid-main'>
-      <div style='display: flex; flex-direction: column; gap: 20px;'>
+    <div class='tab-bar'>
+      <button class='tab-btn active' onclick="showTab('dashboard')" id='tab-dashboard'>Dashboard</button>
+      <button class='tab-btn' onclick="showTab('files')" id='tab-files'>File Manager</button>
+      <button class='tab-btn' onclick="showTab('settings')" id='tab-settings'>Settings</button>
+    </div>
+
+    <div id='content-dashboard' class='tab-content active'>
+      <div class='grid-main'>
+        <div style='display: flex; flex-direction: column; gap: 20px;'>
         <section class='card'>
           <h2>Live Snapshot</h2>
           <div class='readings'>
@@ -761,54 +838,14 @@ void WebManager::handleRoot() {
         </section>
 
         <section class='card'>
-          <h2>Runtime Controls</h2>
-          <form id='cfgForm'>
-            <div class='controls-grid'>
-              <div class='form-group'>
-                <label for='cfgSample'>Sample Interval (ms)</label>
-                <input id='cfgSample' type='number' min='500' max='300000' value='1000' required>
-              </div>
-              <div class='form-group'>
-                <label for='cfgFlush'>SD Flush Interval (ms)</label>
-                <input id='cfgFlush' type='number' min='5000' max='3600000' value='60000' required>
-              </div>
-              <div class='form-group full-width'>
-                <label for='cfgDisplay'>Display Refresh Interval (ms)</label>
-                <input id='cfgDisplay' type='number' min='500' max='300000' value='1000' required>
-              </div>
-            </div>
-            <button type='submit' id='btnSaveCfg'>Apply Settings</button>
-            <div class='alert-banner' id='cfgAlert'></div>
-          </form>
-          
-          <div class='btn-group'>
-            <button class='btn-secondary' id='btnFlush' title='Flush RAM buffer to SD card'>Force Flush</button>
-            <button class='btn-secondary' id='btnNtp' title='Force immediate NTP time sync attempt'>Sync NTP</button>
+          <h2>Manual Diagnostics</h2>
+          <div class='btn-group' style='display: flex; gap: 10px; margin-top: 10px;'>
+            <button class='btn-secondary' id='btnFlush' title='Flush RAM buffer to SD card' style='flex: 1; padding: 10px; background: rgba(255,255,255,0.05); color: var(--text); border: 1px solid var(--card-border); border-radius: 6px; cursor: pointer; font-weight: 500;'>Force Flush</button>
+            <button class='btn-secondary' id='btnNtp' title='Force immediate NTP time sync attempt' style='flex: 1; padding: 10px; background: rgba(255,255,255,0.05); color: var(--text); border: 1px solid var(--card-border); border-radius: 6px; cursor: pointer; font-weight: 500;'>Sync NTP</button>
           </div>
-          <div class='alert-banner' id='actionAlert'></div>
+          <div class='alert-banner' id='actionAlert' style='margin-top: 10px; display: none;'></div>
         </section>
 
-        <section class='card'>
-          <h2>Firmware Update (OTA)</h2>
-          <div class='form-group'>
-            <label>Select Firmware Binary (.bin)</label>
-            <input type='file' id='otaFile' accept='.bin' style='display: none;'>
-            <div id='otaDragDrop' style='border: 2px dashed var(--border); padding: 20px; text-align: center; border-radius: 6px; cursor: pointer; background: rgba(255,255,255,0.02); transition: all 0.2s; margin-top: 8px;'>
-              <span id='otaDragText'>Drag & drop or click to select file</span>
-            </div>
-          </div>
-          <div id='otaProgressContainer' style='display: none; margin-top: 15px;'>
-            <div style='display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px;'>
-              <span id='otaStatus'>Uploading...</span>
-              <span id='otaPercent'>0%</span>
-            </div>
-            <div style='background: rgba(255,255,255,0.1); height: 10px; border-radius: 5px; overflow: hidden;'>
-              <div id='otaProgressBar' style='background: var(--accent); width: 0%; height: 100%; transition: width 0.1s; border-radius: 5px;'></div>
-            </div>
-          </div>
-          <button id='btnStartOta' style='margin-top: 15px; width: 100%;' disabled>Flash Firmware</button>
-          <div class='alert-banner' id='otaAlert' style='margin-top: 10px;'></div>
-        </section>
       </div>
 
       <div style='display: flex; flex-direction: column; gap: 20px;'>
@@ -880,34 +917,98 @@ void WebManager::handleRoot() {
             No battery history loaded.
           </div>
         </section>
-      </div>
-    </div>
+      </div> <!-- End right column -->
+    </div> <!-- End grid-main -->
+  </div> <!-- End content-dashboard -->
 
-    <div class='grid-bottom'>
-      <section class='card'>
-        <h2>SD Files & Tree</h2>
-        <div class='scroll-area' id='sdtree'>loading...</div>
+    <div id='content-files' class='tab-content'>
+      <div class='grid-bottom' style='grid-template-columns: 2fr 1.2fr;'>
+        <section class='card'>
+          <h2>SD File Explorer</h2>
+          <div class='scroll-area' id='sdtree' style='max-height: 400px; overflow-y: auto;'>loading...</div>
+        </section>
+
+        <section class='card'>
+          <h2>Event Timeline</h2>
+          <div class='scroll-area'>
+            <div class='timeline-container' id='eventsTimeline'>
+              <div style='color: var(--text-sub);'>loading...</div>
+            </div>
+          </div>
+        </section>
+      </div> <!-- End grid-bottom -->
+    </div> <!-- End content-files -->
+
+    <div id='content-settings' class='tab-content'>
+      <section class='card' style='max-width: 600px; margin: 0 auto;'>
+        <h2>System Configuration</h2>
+        <form id='settingsForm' onsubmit='saveSettings(event)' style='display: flex; flex-direction: column; gap: 16px;'>
+          
+          <div class='form-group'>
+            <label>Wi-Fi SSID</label>
+            <input type='text' id='cfgWifiSsid' class='form-control' required>
+          </div>
+          
+          <div class='form-group'>
+            <label>Wi-Fi Password</label>
+            <input type='password' id='cfgWifiPassword' class='form-control' placeholder='••••••••'>
+            <span style='font-size: 0.75rem; color: var(--text-sub);'>Leave blank to keep current password</span>
+          </div>
+          
+          <div class='form-group'>
+            <label>Hostname</label>
+            <input type='text' id='cfgHostname' class='form-control' required>
+          </div>
+          
+          <div class='form-group'>
+            <label>Timezone Configuration</label>
+            <input type='text' id='cfgTimezone' class='form-control' required>
+            <span style='font-size: 0.75rem; color: var(--text-sub);'>e.g., AEST-10AEDT,M10.1.0,M4.1.0/3 (Melbourne)</span>
+          </div>
+          
+          <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 16px;'>
+            <div class='form-group'>
+              <label>Sample Interval (ms)</label>
+              <input type='number' id='cfgSampleInterval' class='form-control' min='500' max='60000' required>
+            </div>
+            <div class='form-group'>
+              <label>Log Flush Interval (ms)</label>
+              <input type='number' id='cfgLogFlushInterval' class='form-control' min='5000' max='3600000' required>
+            </div>
+          </div>
+
+          <div class='form-group'>
+            <label>Display Refresh Interval (ms)</label>
+            <input type='number' id='cfgDisplayRefreshInterval' class='form-control' min='500' max='60000' required>
+          </div>
+
+          <button type='submit' class='btn' style='margin-top: 12px; padding: 12px; background: var(--accent); color: var(--text); border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s;'>Save & Apply Settings</button>
+        </form>
       </section>
 
-      <section class='card'>
-        <h2>Downloads</h2>
-        <div class='scroll-area'>
-          <ul class='logs-list' id='logs'>
-            <li style='color: var(--text-sub);'>loading...</li>
-          </ul>
-        </div>
-      </section>
-
-      <section class='card'>
-        <h2>Event Timeline</h2>
-        <div class='scroll-area'>
-          <div class='timeline-container' id='eventsTimeline'>
-            <div style='color: var(--text-sub);'>loading...</div>
+      <section class='card' style='max-width: 600px; margin: 20px auto 0 auto;'>
+        <h2>Firmware Update (OTA)</h2>
+        <div class='form-group'>
+          <label>Select Firmware Binary (.bin)</label>
+          <input type='file' id='otaFile' accept='.bin' style='display: none;'>
+          <div id='otaDragDrop' style='border: 2px dashed var(--card-border); padding: 20px; text-align: center; border-radius: 6px; cursor: pointer; background: rgba(255,255,255,0.02); transition: all 0.2s; margin-top: 8px;'>
+            <span id='otaDragText'>Drag & drop or click to select file</span>
           </div>
         </div>
+        <div id='otaProgressContainer' style='display: none; margin-top: 15px;'>
+          <div style='display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px;'>
+            <span id='otaStatus'>Uploading...</span>
+            <span id='otaPercent'>0%</span>
+          </div>
+          <div style='background: rgba(255,255,255,0.1); height: 10px; border-radius: 5px; overflow: hidden;'>
+            <div id='otaProgressBar' style='background: var(--accent); width: 0%; height: 100%; transition: width 0.1s; border-radius: 5px;'></div>
+          </div>
+        </div>
+        <button id='btnStartOta' class='btn' style='margin-top: 15px; width: 100%; padding: 12px; background: var(--accent); color: var(--text); border: none; border-radius: 6px; font-weight: 600; cursor: pointer;' disabled>Flash Firmware</button>
+        <div class='alert-banner' id='otaAlert' style='margin-top: 10px; display: none;'></div>
       </section>
-    </div>
-  </div>
+    </div> <!-- End content-settings -->
+  </div> <!-- End wrap -->
 
   <script>
     const $ = (id) => document.getElementById(id);
@@ -1680,27 +1781,47 @@ void WebManager::handleRoot() {
       document.body.removeChild(link);
     }
 
-    async function loadLogs() {
+    async function loadSdTree() {
       if (isLoadingHistory) return;
       try {
-        const data = await fetchJson('/api/logs');
+        const data = await fetchJson('/api/sd-tree');
         const files = Array.isArray(data.files) ? data.files : [];
-        const container = $('logs');
+        const container = $('sdtree');
         if (files.length === 0) {
-          container.innerHTML = '<li style="color: var(--text-sub);">No log files found.</li>';
+          container.innerHTML = '<div style="padding: 10px; color: var(--text-sub);">SD card is empty.</div>';
           return;
         }
 
         let html = '';
         for (const f of files) {
-          const n = f.name || '?';
-          const s = (f.size / 1024).toFixed(2);
-          const p = '/api/logs/download?file=' + encodeURIComponent('/logs/' + n);
-          html += '<li><a href="' + p + '">' + n + '</a> <span style="color: var(--text-sub); font-size: 0.75rem;">(' + s + ' KB)</span></li>';
+          const path = f.path;
+          const name = f.name;
+          const isDir = f.is_dir;
+          
+          let cleanPath = path;
+          if (cleanPath.endsWith('/')) cleanPath = cleanPath.slice(0, -1);
+          const slashCount = (cleanPath.match(/\//g) || []).length;
+          const indent = (slashCount - 1) * 20;
+
+          const sizeText = isDir ? '' : ` (${(f.size / 1024).toFixed(2)} KB)`;
+          const icon = isDir ? '📁' : '📄';
+          const downloadUrl = '/api/logs/download?file=' + encodeURIComponent(path);
+
+          html += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; margin-left: ${indent}px; border-bottom: 1px solid rgba(255,255,255,0.03);">
+                     <div style="display: flex; align-items: center; gap: 8px;">
+                       <span>${icon}</span>
+                       ${isDir ? `<span style="font-weight: 500;">${name}</span>` : `<a href="${downloadUrl}" style="color: var(--accent); text-decoration: none;">${name}</a>`}
+                       <span style="color: var(--text-sub); font-size: 0.75rem;">${sizeText}</span>
+                     </div>
+                     <div style="display: flex; gap: 8px;">
+                       <button onclick="renameFile('${path}', '${name}')" style="padding: 2px 6px; font-size: 0.75rem; background: rgba(255,255,255,0.08); color: var(--text); border: 1px solid var(--card-border); border-radius: 4px; cursor: pointer;">Rename</button>
+                       <button onclick="deleteFile('${path}', '${name}')" style="padding: 2px 6px; font-size: 0.75rem; background: rgba(239,68,68,0.2); border: 1px solid var(--error); color: var(--error); border-radius: 4px; cursor: pointer;">Delete</button>
+                     </div>
+                   </div>`;
         }
         container.innerHTML = html;
       } catch (err) {
-        $('logs').innerHTML = '<li style="color: var(--error);">' + err.message + '</li>';
+        $('sdtree').innerHTML = '<div style="padding: 10px; color: var(--error);">' + err.message + '</div>';
       }
     }
 
@@ -1844,27 +1965,75 @@ void WebManager::handleRoot() {
       }
     }
 
+    function showTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+      
+      const targetBtn = $('tab-' + tabId);
+      const targetContent = $('content-' + tabId);
+      if (targetBtn && targetContent) {
+        targetBtn.classList.add('active');
+        targetContent.classList.add('active');
+      }
+    }
+
     async function loadConfig() {
       if (isLoadingHistory) return;
       try {
         const cfg = await fetchJson('/api/config');
-        $('cfgSample').value = cfg.sample_interval_ms;
-        $('cfgFlush').value = cfg.log_flush_interval_ms;
-        $('cfgDisplay').value = cfg.display_refresh_interval_ms;
+        $('cfgWifiSsid').value = cfg.wifi_ssid || '';
+        $('cfgWifiPassword').value = '';
+        $('cfgHostname').value = cfg.hostname || '';
+        $('cfgTimezone').value = cfg.timezone || '';
+        $('cfgSampleInterval').value = cfg.sample_interval_ms;
+        $('cfgLogFlushInterval').value = cfg.log_flush_interval_ms;
+        $('cfgDisplayRefreshInterval').value = cfg.display_refresh_interval_ms;
       } catch (err) {
         console.error("Config fetch error", err);
       }
     }
 
-    async function loadStaticPanels() {
+    async function saveSettings(e) {
+      e.preventDefault();
       if (isLoadingHistory) return;
+      
+      const payload = {
+        wifi_ssid: $('cfgWifiSsid').value,
+        hostname: $('cfgHostname').value,
+        timezone: $('cfgTimezone').value,
+        sample_interval_ms: parseInt($('cfgSampleInterval').value),
+        log_flush_interval_ms: parseInt($('cfgLogFlushInterval').value),
+        display_refresh_interval_ms: parseInt($('cfgDisplayRefreshInterval').value)
+      };
+
+      const pwd = $('cfgWifiPassword').value;
+      if (pwd.length > 0) {
+        payload.wifi_password = pwd;
+      }
+
       try {
-        const tree = await fetchText('/api/sd-tree');
-        $('sdtree').textContent = tree;
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.accepted) {
+          alert(data.message || 'Settings applied successfully.');
+          if (data.reboot) {
+            setTimeout(() => { window.location.reload(); }, 5000);
+          } else {
+            await loadConfig();
+          }
+        } else {
+          alert('Failed to save configuration: ' + data.message);
+        }
       } catch (err) {
-        $('sdtree').textContent = 'Error: ' + err.message;
+        alert('Error saving configuration: ' + err.message);
       }
     }
+
+
 
     function setText(id, text) {
       $(id).textContent = text;
@@ -1885,45 +2054,38 @@ void WebManager::handleRoot() {
       }
     }
 
-    $('cfgForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (isLoadingHistory) return;
-      const alert = $('cfgAlert');
-      alert.style.display = 'none';
-      
-      const payload = {
-        sample_interval_ms: parseInt($('cfgSample').value),
-        log_flush_interval_ms: parseInt($('cfgFlush').value),
-        display_refresh_interval_ms: parseInt($('cfgDisplay').value)
-      };
-
+    async function deleteFile(path, name) {
+      if (!confirm('Are you sure you want to delete ' + name + '?')) return;
       try {
-        const res = await fetch('/api/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        
+        const res = await fetch('/api/logs/delete?file=' + encodeURIComponent(path), { method: 'POST' });
         const data = await res.json();
-        alert.style.display = 'block';
-        if (data.accepted) {
-          alert.textContent = data.message || "Config applied successfully.";
-          alert.className = 'alert-banner success';
+        if (data.success) {
+          alert(data.message || 'Deleted successfully.');
+          await loadSdTree();
         } else {
-          alert.textContent = "Preview response: " + (data.message || "Config apply not accepted.");
-          alert.className = 'alert-banner warning';
-          if (data.current) {
-            $('cfgSample').value = data.current.sample_interval_ms;
-            $('cfgFlush').value = data.current.log_flush_interval_ms;
-            $('cfgDisplay').value = data.current.display_refresh_interval_ms;
-          }
+          alert('Error: ' + data.message);
         }
       } catch (err) {
-        alert.textContent = "Error applying settings: " + err.message;
-        alert.className = 'alert-banner error';
-        alert.style.display = 'block';
+        alert('Failed to delete: ' + err.message);
       }
-    });
+    }
+
+    async function renameFile(path, name) {
+      const newName = prompt('Enter new name for ' + name + ':', name);
+      if (!newName || newName === name) return;
+      try {
+        const res = await fetch('/api/logs/rename?file=' + encodeURIComponent(path) + '&new_name=' + encodeURIComponent(newName), { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          alert(data.message || 'Renamed successfully.');
+          await loadSdTree();
+        } else {
+          alert('Error: ' + data.message);
+        }
+      } catch (err) {
+        alert('Failed to rename: ' + err.message);
+      }
+    }
 
     async function triggerAction(url, btnId) {
       if (isLoadingHistory) return;
@@ -1992,13 +2154,13 @@ void WebManager::handleRoot() {
     });
 
     otaDragDrop.addEventListener('dragleave', () => {
-      otaDragDrop.style.borderColor = 'var(--border)';
+      otaDragDrop.style.borderColor = 'var(--card-border)';
       otaDragDrop.style.background = 'rgba(255, 255, 255, 0.02)';
     });
 
     otaDragDrop.addEventListener('drop', (e) => {
       e.preventDefault();
-      otaDragDrop.style.borderColor = 'var(--border)';
+      otaDragDrop.style.borderColor = 'var(--card-border)';
       otaDragDrop.style.background = 'rgba(255, 255, 255, 0.02)';
       if (e.dataTransfer.files.length > 0) {
         handleOtaFileSelect(e.dataTransfer.files[0]);
@@ -2115,10 +2277,9 @@ void WebManager::handleRoot() {
     (async function boot() {
       onRangeChanged();
       await loadConfig();
-      await loadStaticPanels();
+      await loadSdTree();
       await loadLive();
       await loadHealth();
-      await loadLogs();
       await loadEvents();
       await loadBatteryHistory();
       renderChart();
@@ -2137,16 +2298,12 @@ void WebManager::handleRoot() {
       }, 20000); // Events: Slot 20 (starts at 80s)
 
       setTimeout(() => {
-        setInterval(loadLogs, 60000);
-      }, 40000); // Logs: Slot 40 (starts at 100s)
+        setInterval(loadSdTree, 60000);
+      }, 40000); // SD Tree: Slot 40 (starts at 100s)
 
       setTimeout(() => {
         setInterval(loadBatteryHistory, 60000);
       }, 45000); // Battery: Slot 45 (starts at 95s)
-
-      setTimeout(() => {
-        setInterval(loadStaticPanels, 60000);
-      }, 50000); // Static panels: Slot 50 (starts at 110s)
     })();
   </script>
 </body>
@@ -2340,15 +2497,16 @@ bool WebManager::parseEventRow(const String& line, String& outTs, String& outQua
 }
 
 void WebManager::handleConfigGet() {
-  StaticJsonDocument<320> doc;
-  doc["sample_interval_ms"] = AppConfig::SAMPLE_INTERVAL_MS;
-  doc["log_flush_interval_ms"] = AppConfig::LOG_FLUSH_INTERVAL_MS;
-  doc["display_refresh_interval_ms"] = AppConfig::DISPLAY_REFRESH_INTERVAL_MS;
-  doc["diagnostics_interval_ms"] = AppConfig::DIAGNOSTICS_INTERVAL_MS;
-  doc["ntp_retry_interval_ms"] = AppConfig::NTP_RETRY_INTERVAL_MS;
-  doc["max_log_queue_size"] = AppConfig::MAX_LOG_QUEUE_SIZE;
-  doc["timezone"] = AppConfig::TIMEZONE_MELBOURNE;
-  doc["phase"] = "foundation";
+  StaticJsonDocument<512> doc;
+  doc["wifi_ssid"] = config_->wifiSsid;
+  // For security, do not return the actual password
+  doc["wifi_password"] = "";
+  doc["hostname"] = config_->hostname;
+  doc["timezone"] = config_->timezone;
+  doc["sample_interval_ms"] = config_->sampleIntervalMs;
+  doc["log_flush_interval_ms"] = config_->logFlushIntervalMs;
+  doc["display_refresh_interval_ms"] = config_->displayRefreshIntervalMs;
+  doc["phase"] = "milestone4";
 
   String response;
   serializeJson(doc, response);
@@ -2356,29 +2514,185 @@ void WebManager::handleConfigGet() {
 }
 
 void WebManager::handleConfigPost() {
-  StaticJsonDocument<256> requested;
+  StaticJsonDocument<512> requested;
   if (server_.hasArg("plain") && server_.arg("plain").length() > 0) {
     const DeserializationError err = deserializeJson(requested, server_.arg("plain"));
     if (err) {
       sendJsonError(400, "Invalid JSON body");
       return;
     }
+  } else {
+    sendJsonError(400, "Missing JSON body");
+    return;
   }
 
-  StaticJsonDocument<384> response;
-  response["accepted"] = false;
-  response["message"] = "Config apply is scheduled for phase 3; phase 1 provides API shape only.";
-  response["current"]["sample_interval_ms"] = AppConfig::SAMPLE_INTERVAL_MS;
-  response["current"]["log_flush_interval_ms"] = AppConfig::LOG_FLUSH_INTERVAL_MS;
-  response["current"]["display_refresh_interval_ms"] = AppConfig::DISPLAY_REFRESH_INTERVAL_MS;
+  bool rebootNeeded = false;
 
-  if (!requested.isNull()) {
-    response["requested"] = requested.as<JsonObject>();
+  if (requested.containsKey("wifi_ssid")) {
+    const char* val = requested["wifi_ssid"];
+    if (strcmp(config_->wifiSsid, val) != 0) {
+      strncpy(config_->wifiSsid, val, sizeof(config_->wifiSsid));
+      rebootNeeded = true;
+    }
+  }
+
+  if (requested.containsKey("wifi_password")) {
+    const char* val = requested["wifi_password"];
+    if (strcmp(config_->wifiPassword, val) != 0) {
+      strncpy(config_->wifiPassword, val, sizeof(config_->wifiPassword));
+      rebootNeeded = true;
+    }
+  }
+
+  if (requested.containsKey("hostname")) {
+    const char* val = requested["hostname"];
+    if (strcmp(config_->hostname, val) != 0) {
+      strncpy(config_->hostname, val, sizeof(config_->hostname));
+      rebootNeeded = true;
+    }
+  }
+
+  if (requested.containsKey("timezone")) {
+    const char* val = requested["timezone"];
+    if (strcmp(config_->timezone, val) != 0) {
+      strncpy(config_->timezone, val, sizeof(config_->timezone));
+      if (timeManager_) {
+        timeManager_->setTimezone(config_->timezone);
+      }
+    }
+  }
+
+  if (requested.containsKey("sample_interval_ms")) {
+    config_->sampleIntervalMs = requested["sample_interval_ms"];
+  }
+  if (requested.containsKey("log_flush_interval_ms")) {
+    config_->logFlushIntervalMs = requested["log_flush_interval_ms"];
+  }
+  if (requested.containsKey("display_refresh_interval_ms")) {
+    config_->displayRefreshIntervalMs = requested["display_refresh_interval_ms"];
+  }
+
+  // Save the configuration to the SD card
+  bool saveOk = false;
+  if (loggerManager_) {
+    saveOk = loggerManager_->saveDeviceConfig(*config_);
+  }
+
+  StaticJsonDocument<256> response;
+  response["accepted"] = saveOk;
+  response["reboot"] = rebootNeeded;
+  if (saveOk) {
+    response["message"] = rebootNeeded ? "Configuration saved. Rebooting..." : "Configuration applied dynamically.";
+  } else {
+    response["message"] = "Failed to save configuration to SD card.";
   }
 
   String out;
   serializeJson(response, out);
   server_.send(200, "application/json", out);
+
+  if (saveOk && rebootNeeded) {
+    Serial.println("[Config] Rebooting to apply network configuration changes...");
+    delay(1000);
+    ESP.restart();
+  }
+}
+
+void WebManager::handleLogDelete() {
+  if (!ensureSdReady()) {
+    sendJsonError(503, "SD card unavailable");
+    return;
+  }
+  if (!server_.hasArg("file")) {
+    sendJsonError(400, "Missing file parameter");
+    return;
+  }
+  String path = server_.arg("file");
+  if (!path.startsWith("/") || path.indexOf("..") >= 0) {
+    sendJsonError(400, "Invalid file path");
+    return;
+  }
+  if (path == "/" || path.length() <= 1) {
+    sendJsonError(400, "Cannot delete root directory");
+    return;
+  }
+  if (!SD.exists(path)) {
+    sendJsonError(404, "File or directory not found");
+    return;
+  }
+
+  bool success = false;
+  File f = SD.open(path, "r");
+  if (f) {
+    bool isDir = f.isDirectory();
+    f.close();
+    if (isDir) {
+      success = SD.rmdir(path);
+    } else {
+      success = SD.remove(path);
+    }
+  }
+
+  if (success) {
+    StaticJsonDocument<128> doc;
+    doc["success"] = true;
+    doc["message"] = "Deleted successfully";
+    String out;
+    serializeJson(doc, out);
+    server_.send(200, "application/json", out);
+  } else {
+    sendJsonError(500, "Failed to delete item. Ensure folders are empty.");
+  }
+}
+
+void WebManager::handleLogRename() {
+  if (!ensureSdReady()) {
+    sendJsonError(503, "SD card unavailable");
+    return;
+  }
+  if (!server_.hasArg("file") || !server_.hasArg("new_name")) {
+    sendJsonError(400, "Missing parameters");
+    return;
+  }
+  String oldPath = server_.arg("file");
+  String newName = server_.arg("new_name");
+
+  if (!oldPath.startsWith("/") || oldPath.indexOf("..") >= 0) {
+    sendJsonError(400, "Invalid source path");
+    return;
+  }
+  if (oldPath == "/" || oldPath.length() <= 1) {
+    sendJsonError(400, "Cannot rename root directory");
+    return;
+  }
+  if (newName.indexOf('/') >= 0 || newName.indexOf('\\') >= 0 || newName.indexOf("..") >= 0) {
+    sendJsonError(400, "Invalid target filename");
+    return;
+  }
+
+  int lastSlash = oldPath.lastIndexOf('/');
+  String parentPath = oldPath.substring(0, lastSlash);
+  String newPath = parentPath + "/" + newName;
+
+  if (!SD.exists(oldPath)) {
+    sendJsonError(404, "Source item not found");
+    return;
+  }
+  if (SD.exists(newPath)) {
+    sendJsonError(409, "Target item already exists");
+    return;
+  }
+
+  if (SD.rename(oldPath, newPath)) {
+    StaticJsonDocument<128> doc;
+    doc["success"] = true;
+    doc["message"] = "Renamed successfully";
+    String out;
+    serializeJson(doc, out);
+    server_.send(200, "application/json", out);
+  } else {
+    sendJsonError(500, "Failed to rename item");
+  }
 }
 
 
@@ -2631,71 +2945,87 @@ void WebManager::handleLogDownload() {
   }
 
   const String path = server_.arg("file");
-  if (!path.startsWith("/logs/") || path.indexOf("..") >= 0) {
-    sendJsonError(400, "Only /logs/* files are allowed");
+  if (!path.startsWith("/") || path.indexOf("..") >= 0) {
+    sendJsonError(400, "Invalid file path");
     return;
   }
 
   File file = SD.open(path, "r");
-  if (!file) {
+  if (!file || file.isDirectory()) {
+    if (file) file.close();
     sendJsonError(404, "Requested file not found");
     return;
   }
 
-  const char* contentType = path.endsWith(".csv") ? "text/csv" : "application/octet-stream";
+  const char* contentType = "text/plain";
+  if (path.endsWith(".csv")) {
+    contentType = "text/csv";
+  } else if (path.endsWith(".json")) {
+    contentType = "application/json";
+  } else if (path.endsWith(".bin")) {
+    contentType = "application/octet-stream";
+  }
+
   server_.streamFile(file, contentType);
   file.close();
 }
 
-void WebManager::appendIndent(String& out, uint8_t depth) {
-  for (uint8_t i = 0; i < depth; ++i) {
-    out += "  ";
-  }
-}
-
-void WebManager::appendSdTree(File entry, String& out, uint8_t depth) {
-  while (entry) {
-    File child = entry.openNextFile();
-    if (!child) {
-      break;
-    }
-
-    appendIndent(out, depth);
-    out += child.isDirectory() ? "[D] " : "[F] ";
-    out += child.name();
-    if (!child.isDirectory()) {
-      out += " (";
-      out += String(static_cast<unsigned long>(child.size()));
-      out += " bytes)";
-    }
-    out += "\n";
-
-    if (child.isDirectory()) {
-      appendSdTree(child, out, depth + 1);
-    }
-    child.close();
-  }
-}
-
-void WebManager::handleSdTreeText() {
+void WebManager::handleSdTreeJson() {
   if (!ensureSdReady()) {
-    server_.send(200, "text/plain", "SD card unavailable\n");
+    sendJsonError(503, "SD card unavailable");
     return;
   }
 
   File root = SD.open("/");
-  if (!root) {
-    server_.send(200, "text/plain", "SD root unavailable\n");
+  if (!root || !root.isDirectory()) {
+    sendJsonError(404, "SD root unavailable");
     return;
   }
 
-  String tree;
-  tree.reserve(1024);
-  tree += "/\n";
-  appendSdTree(root, tree, 1);
-  root.close();
+  server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server_.send(200, "application/json", "");
+  server_.sendContent("{\"files\":[");
 
-  server_.send(200, "text/plain", tree);
+  bool first = true;
+  streamSdTree(root, "", first);
+
+  root.close();
+  server_.sendContent("]}");
+}
+
+void WebManager::streamSdTree(File dir, const String& parentPath, bool& first) {
+  while (true) {
+    File entry = dir.openNextFile();
+    if (!entry) {
+      break;
+    }
+
+    if (!first) {
+      server_.sendContent(",");
+    }
+    first = false;
+
+    String name = entry.name();
+    String path = parentPath + "/" + name;
+    if (path.startsWith("//")) {
+      path.remove(0, 1);
+    }
+
+    unsigned long size = entry.isDirectory() ? 0 : entry.size();
+    bool isDir = entry.isDirectory();
+
+    String item = "{\"path\":\"" + path + "\",\"name\":\"" + name + "\",\"size\":" + String(size) + ",\"is_dir\":" + (isDir ? "true" : "false") + "}";
+    server_.sendContent(item);
+
+    if (isDir) {
+      File subDir = SD.open(path);
+      if (subDir) {
+        streamSdTree(subDir, path, first);
+        subDir.close();
+      }
+    }
+    entry.close();
+  }
 }
 
 void WebManager::handleFlushNow() {

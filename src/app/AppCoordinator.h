@@ -10,6 +10,7 @@
 #include "managers/BatteryManager.h"
 #include "models/Sample.h"
 #include "models/SystemHealth.h"
+#include "models/DeviceConfig.h"
 
 class AppCoordinator {
  public:
@@ -22,6 +23,7 @@ class AppCoordinator {
   void handleDiagnostics(uint32_t nowMs);
   void refreshHealth(uint32_t nowMs);
   void setupOta();
+  void initConfiguration();
 
   SensorManager sensorManager_;
   TimeManager timeManager_;
@@ -41,4 +43,5 @@ class AppCoordinator {
   uint32_t lastBatteryLogMs_ = 0;
   bool otaInitialized_ = false;
   bool lastWifiConnected_ = false;
+  DeviceConfig config_;
 };

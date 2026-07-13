@@ -11,6 +11,7 @@ class TimeManager {
   void getTimestamp(char* out, size_t outSize, TimestampQuality& quality) const;
   bool isNtpSynced() const { return ntpSynced_; }
   time_t getBootEpoch() const;
+  void setTimezone(const char* tz);
   bool consumeNtpReestablishedFlag();
   void forceNtpRetry();
 

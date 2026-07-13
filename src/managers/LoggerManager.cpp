@@ -1,5 +1,6 @@
 #include "managers/LoggerManager.h"
 
+#include <ArduinoJson.h>
 #include "config/AppConfig.h"
 
 bool LoggerManager::begin(int sdCsPin, int sckPin, int misoPin, int mosiPin) {
@@ -607,4 +608,63 @@ void LoggerManager::calibrateCsvFile(const char* filepath, time_t bootEpoch) {
   SD.remove(tempPath);
 
   Serial.printf("[Logger] CSV file %s calibration finished. %u lines calibrated\n", filepath, calibratedCount);
+}
+
+bool LoggerManager::saveDeviceConfig(const DeviceConfig& config) {
+  if (!sdHealthy_) {
+    return false;
+  }
+
+  File file = SD.open("/config.json", "w");
+  if (!file) {
+    Serial.println("[Config] Failed to open /config.json for writing");
+    return false;
+  }
+
+  StaticJsonDocument<512> doc;
+  doc["wifi_ssid"] = config.wifiSsid;
+  doc["wifi_password"] = config.wifiPassword;
+  doc["hostname"] = config.hostname;
+  doc["timezone"] = config.timezone;
+  doc["sample_interval_ms"] = config.sampleIntervalMs;
+  doc["log_flush_interval_ms"] = config.logFlushIntervalMs;
+  doc["display_refresh_interval_ms"] = config.displayRefreshIntervalMs;
+
+  size_t bytes = serializeJson(doc, file);
+  file.close();
+  return bytes > 0;
+}
+
+bool LoggerManager::loadDeviceConfig(DeviceConfig& config) {
+  if (!sdHealthy_) {
+    return false;
+  }
+
+  if (!SD.exists("/config.json")) {
+    return false;
+  }
+
+  File file = SD.open("/config.json", "r");
+  if (!file) {
+    return false;
+  }
+
+  StaticJsonDocument<512> doc;
+  DeserializationError error = deserializeJson(doc, file);
+  file.close();
+
+  if (error) {
+    Serial.println("[Config] Failed to parse /config.json, using defaults");
+    return false;
+  }
+
+  if (doc.containsKey("wifi_ssid")) strncpy(config.wifiSsid, doc["wifi_ssid"], sizeof(config.wifiSsid));
+  if (doc.containsKey("wifi_password")) strncpy(config.wifiPassword, doc["wifi_password"], sizeof(config.wifiPassword));
+  if (doc.containsKey("hostname")) strncpy(config.hostname, doc["hostname"], sizeof(config.hostname));
+  if (doc.containsKey("timezone")) strncpy(config.timezone, doc["timezone"], sizeof(config.timezone));
+  if (doc.containsKey("sample_interval_ms")) config.sampleIntervalMs = doc["sample_interval_ms"];
+  if (doc.containsKey("log_flush_interval_ms")) config.logFlushIntervalMs = doc["log_flush_interval_ms"];
+  if (doc.containsKey("display_refresh_interval_ms")) config.displayRefreshIntervalMs = doc["display_refresh_interval_ms"];
+
+  return true;
 }

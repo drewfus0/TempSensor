@@ -7,6 +7,7 @@
 
 #include "config/AppConfig.h"
 #include "models/Sample.h"
+#include "models/DeviceConfig.h"
 #include "utils/RingBuffer.h"
 
 class LoggerManager {
@@ -18,6 +19,8 @@ class LoggerManager {
   bool logEvent(const char* eventName, const char* timestamp, TimestampQuality quality);
   bool logBattery(const char* timestamp, float voltage, int percent, const char* status);
   bool calibrateEstimatedLogs(time_t bootEpoch);
+  bool saveDeviceConfig(const DeviceConfig& config);
+  bool loadDeviceConfig(DeviceConfig& config);
 
   bool forceRetry();
   bool attemptRecovery();

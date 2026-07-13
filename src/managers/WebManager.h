@@ -5,6 +5,7 @@
 
 #include "models/Sample.h"
 #include "models/SystemHealth.h"
+#include "models/DeviceConfig.h"
 
 class LoggerManager;
 class TimeManager;
@@ -12,7 +13,7 @@ class DisplayManager;
 
 class WebManager {
  public:
-  bool begin(const char* ssid, const char* password, const char* hostname, LoggerManager* logger = nullptr, TimeManager* time = nullptr, DisplayManager* display = nullptr);
+  bool begin(DeviceConfig* config, LoggerManager* logger = nullptr, TimeManager* time = nullptr, DisplayManager* display = nullptr);
   void loop();
 
   void setLatestSample(const Sample* sample) { latestSample_ = sample; }
@@ -37,14 +38,15 @@ class WebManager {
   void handleEventsJson();
   void handleLogsJson();
   void handleLogDownload();
-  void handleSdTreeText();
+  void handleSdTreeJson();
   void handleFlushNow();
   void handleNtpRetry();
   void handleOtaUpdatePost();
   void handleOtaUpdateUpload();
+  void handleLogDelete();
+  void handleLogRename();
   void logRequest();
-  void appendSdTree(File entry, String& out, uint8_t depth);
-  void appendIndent(String& out, uint8_t depth);
+  void streamSdTree(File dir, const String& parentPath, bool& first);
 
   bool ensureSdReady();
   void sendJsonError(int code, const char* message);
@@ -60,6 +62,7 @@ class WebManager {
   LoggerManager* loggerManager_ = nullptr;
   TimeManager* timeManager_ = nullptr;
   DisplayManager* displayManager_ = nullptr;
+  DeviceConfig* config_ = nullptr;
   YieldCallback yieldCallback_ = nullptr;
   void* yieldCallbackArg_ = nullptr;
 };
