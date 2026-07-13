@@ -15,6 +15,9 @@ class WebManager {
  public:
   bool begin(DeviceConfig* config, LoggerManager* logger = nullptr, TimeManager* time = nullptr, DisplayManager* display = nullptr);
   void loop();
+  void startAPFallback();
+  void handleWifiReconnectedSTA();
+  bool isApFallbackActive() const { return apFallbackActive_; }
 
   void setLatestSample(const Sample* sample) { latestSample_ = sample; }
   void setHealth(const SystemHealth* health) { health_ = health; }
@@ -65,4 +68,5 @@ class WebManager {
   DeviceConfig* config_ = nullptr;
   YieldCallback yieldCallback_ = nullptr;
   void* yieldCallbackArg_ = nullptr;
+  bool apFallbackActive_ = false;
 };

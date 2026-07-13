@@ -58,6 +58,7 @@ void AppCoordinator::begin() {
 
   // Initialize connection state and log boot event
   lastWifiConnected_ = wifiConnected;
+  wifiDisconnectMs_ = wifiConnected ? 0 : millis();
   char ts[32]{};
   TimestampQuality quality = TimestampQuality::Estimated;
   timeManager_.getTimestamp(ts, sizeof(ts), quality);
@@ -96,9 +97,20 @@ void AppCoordinator::loop() {
       Serial.printf("[WiFi] Connected, IP: %s\n", WiFi.localIP().toString().c_str());
       String eventMsg = "wifi_connected (" + WiFi.SSID() + ")";
       loggerManager_.logEvent(eventMsg.c_str(), ts, quality);
+
+      // Disable softAP fallback if it was active
+      webManager_.handleWifiReconnectedSTA();
     } else {
       Serial.println("[WiFi] Connection lost (Disconnected)");
       loggerManager_.logEvent("wifi_disconnected", ts, quality);
+      wifiDisconnectMs_ = nowMs;
+    }
+  }
+
+  // If WiFi is disconnected, verify if fallback AP should start after 30 seconds
+  if (!wifiConnected && !webManager_.isApFallbackActive()) {
+    if (nowMs - wifiDisconnectMs_ > 30000) {
+      webManager_.startAPFallback();
     }
   }
 
@@ -181,6 +193,8 @@ void AppCoordinator::handleDisplayRefresh(uint32_t nowMs) {
   char ipBuf[20]{};
   if (WiFi.status() == WL_CONNECTED) {
     WiFi.localIP().toString().toCharArray(ipBuf, sizeof(ipBuf));
+  } else if (webManager_.isApFallbackActive()) {
+    WiFi.softAPIP().toString().toCharArray(ipBuf, sizeof(ipBuf));
   } else {
     strncpy(ipBuf, "0.0.0.0", sizeof(ipBuf) - 1);
   }

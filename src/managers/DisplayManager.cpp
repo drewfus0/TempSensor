@@ -1,4 +1,5 @@
 #include "managers/DisplayManager.h"
+#include <ESP8266WiFi.h>
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -262,7 +263,10 @@ void DisplayManager::renderLatest(const Sample& sample,
   makeShortTimestamp(sample.timestamp, tsBuf, sizeof(tsBuf));
 
   char statusBuf[16]{};
-  snprintf(statusBuf, sizeof(statusBuf), "%s|%s|%s", wifiConnected ? "W+" : "W-", sdHealthy ? "S+" : "S-",
+  bool apActive = (WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP);
+  snprintf(statusBuf, sizeof(statusBuf), "%s|%s|%s", 
+           wifiConnected ? "W+" : (apActive ? "W-/AP" : "W-"), 
+           sdHealthy ? "S+" : "S-",
            ntpSynced ? "N+" : "N-");
 
   // 64x48 screen: keep each line compact (about 10 chars at text size 1).

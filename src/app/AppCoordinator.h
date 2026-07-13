@@ -43,5 +43,6 @@ class AppCoordinator {
   uint32_t lastBatteryLogMs_ = 0;
   bool otaInitialized_ = false;
   bool lastWifiConnected_ = false;
+  uint32_t wifiDisconnectMs_ = 0;
   DeviceConfig config_;
 };

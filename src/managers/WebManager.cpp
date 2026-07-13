@@ -83,7 +83,8 @@ bool WebManager::begin(DeviceConfig* config, LoggerManager* logger, TimeManager*
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("[WiFi] Connected, IP: %s\n", WiFi.localIP().toString().c_str());
   } else {
-    Serial.println("[WiFi] Connection timeout, running offline mode");
+    Serial.println("[WiFi] Connection timeout. Starting Fallback AP...");
+    startAPFallback();
   }
 
   registerRoutes();
@@ -3136,6 +3137,30 @@ void WebManager::handleOtaUpdateUpload() {
         displayManager_->showStartupStatus("OTA Web", "Failed", "Check logs", true);
       }
     }
+  }
+}
+
+void WebManager::startAPFallback() {
+  apFallbackActive_ = true;
+  WiFi.mode(WIFI_AP_STA);
+  
+  String apSsid = String(config_->hostname) + "-AP";
+  WiFi.softAP(apSsid.c_str());
+  
+  Serial.printf("[WiFi] Fallback AP Started: %s\n", apSsid.c_str());
+  Serial.printf("[WiFi] AP IP Address: %s\n", WiFi.softAPIP().toString().c_str());
+  
+  if (displayManager_) {
+    displayManager_->showStartupStatus("WiFi AP", "AP Started", apSsid.c_str());
+  }
+}
+
+void WebManager::handleWifiReconnectedSTA() {
+  if (apFallbackActive_) {
+    Serial.println("[WiFi] Station connected. Disabling Fallback AP.");
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+    apFallbackActive_ = false;
   }
 }
 
