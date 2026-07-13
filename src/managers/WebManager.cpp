@@ -943,40 +943,40 @@ void WebManager::handleRoot() {
         <form id='settingsForm' onsubmit='saveSettings(event)' style='display: flex; flex-direction: column; gap: 16px;'>
           
           <div class='form-group'>
-            <label>Wi-Fi SSID</label>
+            <label for='cfgWifiSsid'>Wi-Fi SSID</label>
             <input type='text' id='cfgWifiSsid' class='form-control' required>
           </div>
           
           <div class='form-group'>
-            <label>Wi-Fi Password</label>
+            <label for='cfgWifiPassword'>Wi-Fi Password</label>
             <input type='password' id='cfgWifiPassword' class='form-control' placeholder='••••••••'>
             <span style='font-size: 0.75rem; color: var(--text-sub);'>Leave blank to keep current password</span>
           </div>
           
           <div class='form-group'>
-            <label>Hostname</label>
+            <label for='cfgHostname'>Hostname</label>
             <input type='text' id='cfgHostname' class='form-control' required>
           </div>
           
           <div class='form-group'>
-            <label>Timezone Configuration</label>
+            <label for='cfgTimezone'>Timezone Configuration</label>
             <input type='text' id='cfgTimezone' class='form-control' required>
             <span style='font-size: 0.75rem; color: var(--text-sub);'>e.g., AEST-10AEDT,M10.1.0,M4.1.0/3 (Melbourne)</span>
           </div>
           
           <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 16px;'>
             <div class='form-group'>
-              <label>Sample Interval (ms)</label>
+              <label for='cfgSampleInterval'>Sample Interval (ms)</label>
               <input type='number' id='cfgSampleInterval' class='form-control' min='500' max='60000' required>
             </div>
             <div class='form-group'>
-              <label>Log Flush Interval (ms)</label>
+              <label for='cfgLogFlushInterval'>Log Flush Interval (ms)</label>
               <input type='number' id='cfgLogFlushInterval' class='form-control' min='5000' max='3600000' required>
             </div>
           </div>
 
           <div class='form-group'>
-            <label>Display Refresh Interval (ms)</label>
+            <label for='cfgDisplayRefreshInterval'>Display Refresh Interval (ms)</label>
             <input type='number' id='cfgDisplayRefreshInterval' class='form-control' min='500' max='60000' required>
           </div>
 
@@ -987,7 +987,7 @@ void WebManager::handleRoot() {
       <section class='card' style='max-width: 600px; margin: 20px auto 0 auto;'>
         <h2>Firmware Update (OTA)</h2>
         <div class='form-group'>
-          <label>Select Firmware Binary (.bin)</label>
+          <label for='otaFile'>Select Firmware Binary (.bin)</label>
           <input type='file' id='otaFile' accept='.bin' style='display: none;'>
           <div id='otaDragDrop' style='border: 2px dashed var(--card-border); padding: 20px; text-align: center; border-radius: 6px; cursor: pointer; background: rgba(255,255,255,0.02); transition: all 0.2s; margin-top: 8px;'>
             <span id='otaDragText'>Drag & drop or click to select file</span>
@@ -1844,7 +1844,7 @@ void WebManager::handleRoot() {
             severity = 'error';
           } else if (evLower.indexOf('warn') >= 0) {
             severity = 'warning';
-          } else if (e.event === 'ntp_reestablished') {
+          } else if (e.event === 'ntp_reestablished' || e.event === 'ntp_synced') {
             severity = 'ntp_reestablished';
           }
           
@@ -2980,6 +2980,12 @@ void WebManager::handleLogDownload() {
   } else if (path.endsWith(".bin")) {
     contentType = "application/octet-stream";
   }
+
+  int lastSlash = path.lastIndexOf('/');
+  String filename = (lastSlash >= 0) ? path.substring(lastSlash + 1) : path;
+
+  server_.sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
+  server_.sendHeader("Connection", "close");
 
   server_.streamFile(file, contentType);
   file.close();

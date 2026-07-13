@@ -63,7 +63,16 @@ void AppCoordinator::begin() {
   timeManager_.getTimestamp(ts, sizeof(ts), quality);
   loggerManager_.logEvent("boot", ts, quality);
 
-  if (!timeManager_.isNtpSynced()) {
+  if (wifiConnected) {
+    String eventMsg = "wifi_connected (" + WiFi.SSID() + ")";
+    loggerManager_.logEvent(eventMsg.c_str(), ts, quality);
+  } else {
+    loggerManager_.logEvent("wifi_disconnected", ts, quality);
+  }
+
+  if (timeManager_.isNtpSynced()) {
+    loggerManager_.logEvent("ntp_synced", ts, quality);
+  } else {
     loggerManager_.logEvent("ntp_failed", ts, quality);
   }
 
@@ -85,7 +94,8 @@ void AppCoordinator::loop() {
     timeManager_.getTimestamp(ts, sizeof(ts), quality);
     if (wifiConnected) {
       Serial.printf("[WiFi] Connected, IP: %s\n", WiFi.localIP().toString().c_str());
-      loggerManager_.logEvent("wifi_connected", ts, quality);
+      String eventMsg = "wifi_connected (" + WiFi.SSID() + ")";
+      loggerManager_.logEvent(eventMsg.c_str(), ts, quality);
     } else {
       Serial.println("[WiFi] Connection lost (Disconnected)");
       loggerManager_.logEvent("wifi_disconnected", ts, quality);
