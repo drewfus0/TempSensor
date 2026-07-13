@@ -1,61 +1,59 @@
-# TempSensor Project Handoff - Milestone 3 Kickoff
+# TempSensor Project Handoff - Milestone 5 Kickoff
 
-Date: 2026-07-10  
+Date: 2026-07-14  
 Author: Antigravity AI  
 
 ---
 
-## 1. Current State
-* **Milestone 2 Accomplished:** The local web server, OLED shield display, SD log writer, and Web UI are fully operational and stable.
-* **Sensor Logging & History:** BME280 metrics are written to pre-allocated daily binary files. The web client downloads data over `/api/history` and aggregates points on the fly.
-* **Aggregated Visualizations:** 
-  * The main uPlot chart uses client-side binning to display Min/Max range bands (5% opacity) and solid Average lines (100% opacity).
-  * Hovering over the graph updates the legend to show combined `Avg | Min | Max` values for each metric in a single clean row, while hiding boundary rows to avoid legend clutter.
-  * Added a **Bin Size** dropdown control with an interactive **Custom Seconds** field, which triggers instant, lag-free client-side re-aggregation on the cached data.
-* **Battery Analytics:** 
-  * Battery statistics are written to `/logs/battery.csv` every 60s.
-  * A second uPlot dashboard chart parses this CSV to draw the battery voltage curve over the last 24 hours.
-* **OLED Status Line:** Displays temperature, humidity, pressure, Wi-Fi status, battery percentages, and a **1-pixel wide vertical queue line** on the far right column showing RAM buffer fill levels.
+## 1. Current State (Milestone 4 Accomplished)
+
+We have successfully completed all planned features for **Milestone 4**:
+*   **Persistent Configuration Storage:** Created [DeviceConfig.h](file:///home/drewfus/TempSensor/include/models/DeviceConfig.h) configuration models saved persistently to `/config.json` on the SD card using `ArduinoJson`.
+*   **Timezone & Network Configurations:** Added runtime timezone configurations rule reloading (`TimeManager::setTimezone()`) and dynamic adjustments of sampling, flush, and display refresh intervals without rebooting.
+*   **Wi-Fi AP Fallback Recovery Mode:** If Wi-Fi fails to connect on boot (after 15s) or disconnects during loop execution (after 30s), the board starts a local fallback Access Point (`<Hostname>-AP`) allowing configuration recovery via `http://192.168.4.1`. Upon reconnecting, the fallback AP is disabled.
+*   **Unified SD File Explorer:** Replaced separate tree and downloads sections with a single, auto-sizing unified file explorer displaying folders/files. Added click-to-download with correct original filenames, connection-closure headers to prevent downloads sticking at 100%, and inline **Rename** and **Delete** actions for both files and empty directories anywhere on the SD card.
+*   **OLED Screen Indicators:** Mapped battery percentage to line 4, showing real-time states (`Chg`, `Dis`, `Ful`). Configured the OLED status line to show `W-/AP` and print the AP IP address `192.168.4.1` when fallback AP is active.
+*   **Event Timeline Chronology:** Moved the Event Timeline back to the main dashboard. Refactored the ESP8266 backend (`streamEventsJson()`) to seek backward from the end of `events.csv`, retrieving the actual latest 30 events in milliseconds, rendered with full dates and times, ordering the newest events at the very top. Added initial boot-time Wi-Fi SSID and NTP sync success logging.
+*   **A11y Fixes:** Associated all 8 settings form fields and OTA file selector labels with their respective input elements using `for` attributes.
 
 ---
 
 ## 2. Resource & Build Status
-* **RAM:** **53.6%** (used 43,892 bytes of 81,920 bytes)
-* **Flash:** **45.0%** (used 469,511 bytes of 1,044,464 bytes)
-* **Verify Command:** `pio run` (compiles successfully with zero warnings/errors in program code).
+
+*   **RAM:** **57.1%** (used 46,788 bytes of 81,920 bytes)
+*   **Flash:** **50.7%** (used 529,528 bytes of 1,044,464 bytes)
+*   **Verify Command:** `pio run` (compiles successfully with zero warnings/errors).
 
 ---
 
-## 3. Milestone 3 Roadmap (Next Session Tasks)
+## 3. Milestone 5 Roadmap (Next Session Tasks)
 
-### Task 1: Over-the-Air (OTA) Updates
-* Integrate `ArduinoOTA` or a simple HTTP-based web updater so the board can be flashed remotely over Wi-Fi, avoiding physical serial cable connections.
+Milestone 5 is dedicated to a comprehensive **Code Review, Structural Optimization, and Memory Audit**:
 
-### Task 2: Signal Stability & Soldering
-* Solder pins and components together in a stacked shield design to replace temporary breadboard jumper connections and eliminate signal/power drops.
+### Task 1: Code Comprehension & Walkthrough
+*   Document the logical structure and interactions between the components:
+    *   [AppCoordinator](file:///home/drewfus/TempSensor/src/app/AppCoordinator.cpp) (execution loop coordinator)
+    *   [WebManager](file:///home/drewfus/TempSensor/src/managers/WebManager.cpp) (REST APIs, static PROGMEM assets, AP recovery, OTA uploader)
+    *   [LoggerManager](file:///home/drewfus/TempSensor/src/managers/LoggerManager.cpp) (SD card logs queue, JSON configurations persistence)
+    *   [TimeManager](file:///home/drewfus/TempSensor/src/managers/TimeManager.cpp) (NTP time synchronization, POSIX timezone parser)
+    *   [DisplayManager](file:///home/drewfus/TempSensor/src/managers/DisplayManager.cpp) (SSD1306 custom graphics, status lines)
 
-### Task 3: Battery Slope Analysis (State Tracking)
-* Implement algorithms that parse the slope of the battery voltage curve over time. Use this trend to dynamically determine and display whether the battery is currently `Charging` or `Discharging` (before the physical diode sensing hardware is added).
+### Task 2: Structural Code Improvements
+*   Investigate refactoring code patterns to improve read/write operations stability.
+*   Evaluate separation of concerns, decoupling managers where appropriate (e.g. standardizing event log interfaces).
+*   Assess inline styles and raw literal HTML templates storage, reviewing options to host assets or gzip templates.
 
-### Task 4: Solar Study
-* Perform a technical feasibility study to calculate power consumption versus solar panel output. Determine if 4–6 hours of daily sunlight is enough to maintain a positive charge cycle.
-
-### Task 5: Detailed System Logging to Serial
-* Redirect important transitions to the Serial console for easier debugging:
-  * Log incoming web API calls.
-  * Trace NTP status (failure, retry, success).
-  * Trace SD card write queue flushes (success vs. failures).
-  * Trace Wi-Fi status transitions.
-
-### Task 6: Retroactive Timestamp Calibration
-* When the board boots without NTP, it logs with estimated timestamps. Implement a parser that retroactively updates the estimated timestamps in the event files and daily binary logs once NTP successfully syncs.
+### Task 3: Memory & Heap Analysis
+*   Detail the device's heap allocation patterns.
+*   Identify potential risk areas for memory leaks, fragmentation, or Stack Overflow on ESP8266.
+*   Analyze static RAM usage breakdown:
+    *   OLED screen buffer: 384 bytes.
+    *   Logger Ring Buffer (`RingBuffer<Sample, 128>`): ~6.1 KB static RAM.
+    *   ESP8266 web client headers buffers and JSON parser sizing constraints.
 
 ---
 
 ## 4. Suggested First Steps for Next Session
-1. Run `pio run` to verify the build is in a clean starting state.
-2. Select one of the Milestone 3 tasks (e.g. implementing **OTA Updates** or **Serial Diagnostics**).
-3. Reference active managers in:
-   * [WebManager.cpp](file:///home/drewfus/TempSensor/src/managers/WebManager.cpp) (web server endpoints and OTA update portal).
-   * [LoggerManager.cpp](file:///home/drewfus/TempSensor/src/managers/LoggerManager.cpp) (events logging and CSV formatting).
-   * [BatteryManager.cpp](file:///home/drewfus/TempSensor/src/managers/BatteryManager.cpp) (prediction values and slopes).
+
+1.  Review the memory footprints under active API calls (e.g., streaming long logs).
+2.  Start with a structural critique of [WebManager.cpp](file:///home/drewfus/TempSensor/src/managers/WebManager.cpp) to isolate the massive PROGMEM HTML template literal from API routing logic.
