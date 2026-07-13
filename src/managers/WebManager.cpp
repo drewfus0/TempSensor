@@ -846,6 +846,15 @@ void WebManager::handleRoot() {
           <div class='alert-banner' id='actionAlert' style='margin-top: 10px; display: none;'></div>
         </section>
 
+        <section class='card'>
+          <h2>Event Timeline</h2>
+          <div class='scroll-area'>
+            <div class='timeline-container' id='eventsTimeline'>
+              <div style='color: var(--text-sub);'>loading...</div>
+            </div>
+          </div>
+        </section>
+
       </div>
 
       <div style='display: flex; flex-direction: column; gap: 20px;'>
@@ -922,21 +931,10 @@ void WebManager::handleRoot() {
   </div> <!-- End content-dashboard -->
 
     <div id='content-files' class='tab-content'>
-      <div class='grid-bottom' style='grid-template-columns: 2fr 1.2fr;'>
-        <section class='card'>
-          <h2>SD File Explorer</h2>
-          <div class='scroll-area' id='sdtree' style='max-height: 400px; overflow-y: auto;'>loading...</div>
-        </section>
-
-        <section class='card'>
-          <h2>Event Timeline</h2>
-          <div class='scroll-area'>
-            <div class='timeline-container' id='eventsTimeline'>
-              <div style='color: var(--text-sub);'>loading...</div>
-            </div>
-          </div>
-        </section>
-      </div> <!-- End grid-bottom -->
+      <section class='card'>
+        <h2>SD File Explorer</h2>
+        <div id='sdtree' style='background: rgba(0, 0, 0, 0.25); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.78rem; line-height: 1.4; color: #a5f3fc; white-space: normal;'>loading...</div>
+      </section>
     </div> <!-- End content-files -->
 
     <div id='content-settings' class='tab-content'>
@@ -1850,7 +1848,7 @@ void WebManager::handleRoot() {
             severity = 'ntp_reestablished';
           }
           
-          const timePart = e.ts.split(' ').slice(1).join(' ') || e.ts;
+          const timePart = e.ts;
           html += '<div class="timeline-item ' + severity + '">';
           html += '  <div class="timeline-time">' + timePart + '</div>';
           html += '  <div class="timeline-content">' + e.event + '</div>';
@@ -2702,6 +2700,27 @@ void WebManager::streamEventsJson(File& file, const String& startTs, const Strin
   server_.send(200, "application/json", "");
 
   server_.sendContent("{\"events\":[");
+
+  uint32_t fileSize = file.size();
+  if (fileSize > 0) {
+    uint32_t pos = fileSize;
+    uint32_t newlineCount = 0;
+    while (pos > 0) {
+      pos--;
+      file.seek(pos);
+      char c = file.read();
+      if (c == '\n') {
+        newlineCount++;
+        if (newlineCount > limit) {
+          break;
+        }
+      }
+    }
+    if (pos == 0) {
+      file.seek(0);
+    }
+  }
+
   uint32_t emitted = 0;
   while (file.available()) {
     const String line = file.readStringUntil('\n');
@@ -2724,10 +2743,6 @@ void WebManager::streamEventsJson(File& file, const String& startTs, const Strin
     
     if (yieldCallback_) {
       yieldCallback_(yieldCallbackArg_);
-    }
-
-    if (emitted >= limit) {
-      break;
     }
   }
 
