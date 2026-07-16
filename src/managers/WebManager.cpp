@@ -1093,48 +1093,60 @@ void WebManager::handleRoot() {
     let uplotInstance = null;
     let batChartInstance = null;
     let loadedBatteryData = [];
-    let timerLive = null;
-    let timerHealth = null;
-    let timerEvents = null;
-    let timerSdTree = null;
-    let timerBattery = null;
+    let tasks = [];
+    let schedulerTimer = null;
 
-    let lastLiveFetchTime = Date.now();
-    let lastHealthFetchTime = Date.now();
-    let lastEventsFetchTime = Date.now();
-    let lastSdTreeFetchTime = Date.now();
-    let lastBatteryFetchTime = Date.now();
+    function initTasks() {
+      const now = Date.now();
+      tasks = [
+        { name: 'sdtree', intervalKey: 'uiIntervalSdTree', action: loadSdTree, lastRun: now, priority: 5 },
+        { name: 'battery', intervalKey: 'uiIntervalBattery', action: loadBatteryHistory, lastRun: now, priority: 4 },
+        { name: 'events', intervalKey: 'uiIntervalEvents', action: loadEvents, lastRun: now, priority: 3 },
+        { name: 'health', intervalKey: 'uiIntervalHealth', action: loadHealth, lastRun: now, priority: 2 },
+        { name: 'live', intervalKey: 'uiIntervalLive', action: loadLive, lastRun: now, priority: 1 }
+      ];
+    }
+
+    function getTaskDefault(key) {
+      if (key === 'uiIntervalLive') return 10;
+      if (key === 'uiIntervalHealth') return 20;
+      if (key === 'uiIntervalEvents') return 30;
+      if (key === 'uiIntervalSdTree') return 120;
+      if (key === 'uiIntervalBattery') return 50;
+      return 60;
+    }
 
     function updateCountdowns() {
       const now = Date.now();
+      if (tasks.length === 0) return;
       
-      const liveSec = parseInt($('uiIntervalLive').value) || 15;
-      const healthSec = parseInt($('uiIntervalHealth').value) || 20;
-      const eventsSec = parseInt($('uiIntervalEvents').value) || 60;
-      const sdTreeSec = parseInt($('uiIntervalSdTree').value) || 60;
-      const batterySec = parseInt($('uiIntervalBattery').value) || 60;
-
-      const liveRem = Math.max(0, Math.ceil((lastLiveFetchTime + liveSec * 1000 - now) / 1000));
-      const healthRem = Math.max(0, Math.ceil((lastHealthFetchTime + healthSec * 1000 - now) / 1000));
-      const eventsRem = Math.max(0, Math.ceil((lastEventsFetchTime + eventsSec * 1000 - now) / 1000));
-      const sdTreeRem = Math.max(0, Math.ceil((lastSdTreeFetchTime + sdTreeSec * 1000 - now) / 1000));
-      const batteryRem = Math.max(0, Math.ceil((lastBatteryFetchTime + batterySec * 1000 - now) / 1000));
-
-      $('cntLive').textContent = liveRem + 's';
-      $('cntHealth').textContent = healthRem + 's';
-      $('cntEvents').textContent = eventsRem + 's';
-      $('cntSdTree').textContent = sdTreeRem + 's';
-      $('cntBattery').textContent = batteryRem + 's';
+      for (const t of tasks) {
+        const intervalSec = parseInt($(t.intervalKey).value) || getTaskDefault(t.intervalKey);
+        const intervalMs = intervalSec * 1000;
+        const elapsed = now - t.lastRun;
+        const rem = Math.max(0, Math.ceil((intervalMs - elapsed) / 1000));
+        
+        let displayId = '';
+        if (t.name === 'live') displayId = 'cntLive';
+        else if (t.name === 'health') displayId = 'cntHealth';
+        else if (t.name === 'events') displayId = 'cntEvents';
+        else if (t.name === 'sdtree') displayId = 'cntSdTree';
+        else if (t.name === 'battery') displayId = 'cntBattery';
+        
+        if (displayId) {
+          $(displayId).textContent = rem + 's';
+        }
+      }
     }
 
     setInterval(updateCountdowns, 1000);
 
     function loadUiIntervals() {
-      $('uiIntervalLive').value = localStorage.getItem('uiIntervalLive') || 15;
+      $('uiIntervalLive').value = localStorage.getItem('uiIntervalLive') || 10;
       $('uiIntervalHealth').value = localStorage.getItem('uiIntervalHealth') || 20;
-      $('uiIntervalEvents').value = localStorage.getItem('uiIntervalEvents') || 60;
-      $('uiIntervalSdTree').value = localStorage.getItem('uiIntervalSdTree') || 60;
-      $('uiIntervalBattery').value = localStorage.getItem('uiIntervalBattery') || 60;
+      $('uiIntervalEvents').value = localStorage.getItem('uiIntervalEvents') || 30;
+      $('uiIntervalSdTree').value = localStorage.getItem('uiIntervalSdTree') || 120;
+      $('uiIntervalBattery').value = localStorage.getItem('uiIntervalBattery') || 50;
     }
 
     function saveUiIntervals() {
@@ -1144,48 +1156,60 @@ void WebManager::handleRoot() {
       localStorage.setItem('uiIntervalSdTree', $('uiIntervalSdTree').value);
       localStorage.setItem('uiIntervalBattery', $('uiIntervalBattery').value);
       
-      startTimers(false);
+      const now = Date.now();
+      for (const t of tasks) {
+        t.lastRun = now;
+      }
+      
+      startScheduler();
       alert("Telemetry fetch rates updated successfully!");
     }
 
-    function startTimers(staggered = false) {
-      if (timerLive) clearInterval(timerLive);
-      if (timerHealth) clearInterval(timerHealth);
-      if (timerEvents) clearInterval(timerEvents);
-      if (timerSdTree) clearInterval(timerSdTree);
-      if (timerBattery) clearInterval(timerBattery);
-
-      const liveSec = parseInt($('uiIntervalLive').value) || 15;
-      const healthSec = parseInt($('uiIntervalHealth').value) || 20;
-      const eventsSec = parseInt($('uiIntervalEvents').value) || 60;
-      const sdTreeSec = parseInt($('uiIntervalSdTree').value) || 60;
-      const batterySec = parseInt($('uiIntervalBattery').value) || 60;
-
+    function startScheduler(staggered = false) {
+      if (schedulerTimer) clearInterval(schedulerTimer);
+      
       const now = Date.now();
-      if (staggered) {
-        lastLiveFetchTime = now - (liveSec - 5) * 1000;
-        lastHealthFetchTime = now - (healthSec - 10) * 1000;
-        lastEventsFetchTime = now - (eventsSec - 20) * 1000;
-        lastSdTreeFetchTime = now - (sdTreeSec - 40) * 1000;
-        lastBatteryFetchTime = now - (batterySec - 45) * 1000;
+      if (staggered && tasks.length > 0) {
+        for (const t of tasks) {
+          const intervalSec = parseInt($(t.intervalKey).value) || getTaskDefault(t.intervalKey);
+          let offsetSec = 0;
+          if (t.name === 'live') offsetSec = 5;
+          else if (t.name === 'health') offsetSec = 10;
+          else if (t.name === 'events') offsetSec = 20;
+          else if (t.name === 'sdtree') offsetSec = 40;
+          else if (t.name === 'battery') offsetSec = 45;
+          t.lastRun = now - (intervalSec - offsetSec) * 1000;
+        }
+      }
+      
+      schedulerTimer = setInterval(schedulerTick, 10000);
+    }
 
-        setTimeout(() => { timerLive = setInterval(loadLive, liveSec * 1000); }, 5000);
-        setTimeout(() => { timerHealth = setInterval(loadHealth, healthSec * 1000); }, 10000);
-        setTimeout(() => { timerEvents = setInterval(loadEvents, eventsSec * 1000); }, 20000);
-        setTimeout(() => { timerSdTree = setInterval(loadSdTree, sdTreeSec * 1000); }, 40000);
-        setTimeout(() => { timerBattery = setInterval(loadBatteryHistory, batterySec * 1000); }, 45000);
-      } else {
-        lastLiveFetchTime = now;
-        lastHealthFetchTime = now;
-        lastEventsFetchTime = now;
-        lastSdTreeFetchTime = now;
-        lastBatteryFetchTime = now;
+    async function schedulerTick() {
+      if (isLoadingHistory) return;
+      
+      const now = Date.now();
+      const dueTasks = [];
 
-        timerLive = setInterval(loadLive, liveSec * 1000);
-        timerHealth = setInterval(loadHealth, healthSec * 1000);
-        timerEvents = setInterval(loadEvents, eventsSec * 1000);
-        timerSdTree = setInterval(loadSdTree, sdTreeSec * 1000);
-        timerBattery = setInterval(loadBatteryHistory, batterySec * 1000);
+      for (const t of tasks) {
+        const intervalSec = parseInt($(t.intervalKey).value) || getTaskDefault(t.intervalKey);
+        const intervalMs = intervalSec * 1000;
+        if (now - t.lastRun >= intervalMs) {
+          dueTasks.push(t);
+        }
+      }
+
+      if (dueTasks.length === 0) return;
+
+      dueTasks.sort((a, b) => b.priority - a.priority);
+
+      const taskToRun = dueTasks[0];
+      taskToRun.lastRun = now;
+      
+      try {
+        await taskToRun.action();
+      } catch (err) {
+        console.error(`Scheduler failed to run ${taskToRun.name}:`, err);
       }
     }
 
@@ -2521,8 +2545,9 @@ void WebManager::handleRoot() {
       await loadBatteryHistory();
       renderChart();
 
+      initTasks();
       loadUiIntervals();
-      startTimers(true);
+      startScheduler(true);
     });
   </script>
 </body>
