@@ -1009,6 +1009,33 @@ void WebManager::handleRoot() {
         <button id='btnStartOta' class='btn' style='margin-top: 15px; width: 100%; padding: 12px; background: var(--accent); color: var(--text); border: none; border-radius: 6px; font-weight: 600; cursor: pointer;' disabled>Flash Firmware</button>
         <div class='alert-banner' id='otaAlert' style='margin-top: 10px; display: none;'></div>
       </section>
+
+      <section class='card' style='max-width: 600px; margin: 20px auto 0 auto;'>
+        <h2>Web Telemetry Intervals</h2>
+        <div style='display: flex; flex-direction: column; gap: 16px;'>
+          <div class='form-group'>
+            <label for='uiIntervalLive'>Live Telemetry Interval (seconds)</label>
+            <input type='number' id='uiIntervalLive' class='form-control' min='1' max='300' value='15'>
+          </div>
+          <div class='form-group'>
+            <label for='uiIntervalHealth'>System Health Interval (seconds)</label>
+            <input type='number' id='uiIntervalHealth' class='form-control' min='5' max='600' value='20'>
+          </div>
+          <div class='form-group'>
+            <label for='uiIntervalEvents'>Events List Interval (seconds)</label>
+            <input type='number' id='uiIntervalEvents' class='form-control' min='5' max='3600' value='60'>
+          </div>
+          <div class='form-group'>
+            <label for='uiIntervalSdTree'>SD Explorer Interval (seconds)</label>
+            <input type='number' id='uiIntervalSdTree' class='form-control' min='10' max='3600' value='60'>
+          </div>
+          <div class='form-group'>
+            <label for='uiIntervalBattery'>Battery History Interval (seconds)</label>
+            <input type='number' id='uiIntervalBattery' class='form-control' min='10' max='3600' value='60'>
+          </div>
+          <button id='btnSaveUiIntervals' class='btn' style='margin-top: 12px; padding: 12px; background: var(--accent); color: var(--text); border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s;'>Update Fetch Rates</button>
+        </div>
+      </section>
     </div> <!-- End content-settings -->
   </div> <!-- End wrap -->
 
@@ -1018,6 +1045,59 @@ void WebManager::handleRoot() {
     let uplotInstance = null;
     let batChartInstance = null;
     let loadedBatteryData = [];
+    let timerLive = null;
+    let timerHealth = null;
+    let timerEvents = null;
+    let timerSdTree = null;
+    let timerBattery = null;
+
+    function loadUiIntervals() {
+      $('uiIntervalLive').value = localStorage.getItem('uiIntervalLive') || 15;
+      $('uiIntervalHealth').value = localStorage.getItem('uiIntervalHealth') || 20;
+      $('uiIntervalEvents').value = localStorage.getItem('uiIntervalEvents') || 60;
+      $('uiIntervalSdTree').value = localStorage.getItem('uiIntervalSdTree') || 60;
+      $('uiIntervalBattery').value = localStorage.getItem('uiIntervalBattery') || 60;
+    }
+
+    function saveUiIntervals() {
+      localStorage.setItem('uiIntervalLive', $('uiIntervalLive').value);
+      localStorage.setItem('uiIntervalHealth', $('uiIntervalHealth').value);
+      localStorage.setItem('uiIntervalEvents', $('uiIntervalEvents').value);
+      localStorage.setItem('uiIntervalSdTree', $('uiIntervalSdTree').value);
+      localStorage.setItem('uiIntervalBattery', $('uiIntervalBattery').value);
+      
+      startTimers(false);
+      alert("Telemetry fetch rates updated successfully!");
+    }
+
+    function startTimers(staggered = false) {
+      if (timerLive) clearInterval(timerLive);
+      if (timerHealth) clearInterval(timerHealth);
+      if (timerEvents) clearInterval(timerEvents);
+      if (timerSdTree) clearInterval(timerSdTree);
+      if (timerBattery) clearInterval(timerBattery);
+
+      const liveSec = parseInt($('uiIntervalLive').value) || 15;
+      const healthSec = parseInt($('uiIntervalHealth').value) || 20;
+      const eventsSec = parseInt($('uiIntervalEvents').value) || 60;
+      const sdTreeSec = parseInt($('uiIntervalSdTree').value) || 60;
+      const batterySec = parseInt($('uiIntervalBattery').value) || 60;
+
+      if (staggered) {
+        setTimeout(() => { timerLive = setInterval(loadLive, liveSec * 1000); }, 5000);
+        setTimeout(() => { timerHealth = setInterval(loadHealth, healthSec * 1000); }, 10000);
+        setTimeout(() => { timerEvents = setInterval(loadEvents, eventsSec * 1000); }, 20000);
+        setTimeout(() => { timerSdTree = setInterval(loadSdTree, sdTreeSec * 1000); }, 40000);
+        setTimeout(() => { timerBattery = setInterval(loadBatteryHistory, batterySec * 1000); }, 45000);
+      } else {
+        timerLive = setInterval(loadLive, liveSec * 1000);
+        timerHealth = setInterval(loadHealth, healthSec * 1000);
+        timerEvents = setInterval(loadEvents, eventsSec * 1000);
+        timerSdTree = setInterval(loadSdTree, sdTreeSec * 1000);
+        timerBattery = setInterval(loadBatteryHistory, batterySec * 1000);
+      }
+    }
+
     let historyLoaded = false;
     let historyDataset = [];
     let lastLive = null;
@@ -2170,6 +2250,7 @@ void WebManager::handleRoot() {
     $('btnLoad').addEventListener('click', loadHistory);
     $('btnDownloadCsv').addEventListener('click', downloadFilteredCSV);
     $('btnDownloadBatCsv').addEventListener('click', downloadBatteryCSV);
+    $('btnSaveUiIntervals').addEventListener('click', saveUiIntervals);
     $('range').addEventListener('change', onRangeChanged);
     $('binSize').addEventListener('change', () => {
       const isCustom = $('binSize').value === 'custom';
@@ -2335,26 +2416,8 @@ void WebManager::handleRoot() {
       await loadBatteryHistory();
       renderChart();
 
-      // Staggered polling intervals to spread the load on ESP8266
-      setTimeout(() => {
-        setInterval(loadLive, 15000);
-      }, 5000 ); // Live: Slot 0 (starts at 10s)
-
-      setTimeout(() => {
-        setInterval(loadHealth, 20000);
-      }, 10000); // Health: Slot 10 (starts at 20s)
-
-      setTimeout(() => {
-        setInterval(loadEvents, 60000);
-      }, 20000); // Events: Slot 20 (starts at 80s)
-
-      setTimeout(() => {
-        setInterval(loadSdTree, 60000);
-      }, 40000); // SD Tree: Slot 40 (starts at 100s)
-
-      setTimeout(() => {
-        setInterval(loadBatteryHistory, 60000);
-      }, 45000); // Battery: Slot 45 (starts at 95s)
+      loadUiIntervals();
+      startTimers(true);
     })();
   </script>
 </body>
