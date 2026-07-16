@@ -1124,7 +1124,8 @@ void WebManager::handleRoot() {
         const intervalSec = parseInt($(t.intervalKey).value) || getTaskDefault(t.intervalKey);
         const intervalMs = intervalSec * 1000;
         const elapsed = now - t.lastRun;
-        const rem = Math.max(0, Math.ceil((intervalMs - elapsed) / 1000));
+        const diffMs = intervalMs - elapsed;
+        const rem = diffMs >= 0 ? Math.ceil(diffMs / 1000) : Math.floor(diffMs / 1000);
         
         let displayId = '';
         if (t.name === 'live') displayId = 'cntLive';
