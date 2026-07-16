@@ -1769,7 +1769,11 @@ void WebManager::handleRoot() {
           if (lastPoint.tr && lastPoint.tr > 0) {
             const hours = Math.floor(lastPoint.tr / 3600);
             const mins = Math.floor((lastPoint.tr % 3600) / 60);
-            metaText += ` (${hours}h ${mins}m remaining)`;
+            if (lastPoint.s === 'Charging / USB') {
+              metaText += ` (${hours}h ${mins}m to full)`;
+            } else {
+              metaText += ` (${hours}h ${mins}m remaining)`;
+            }
           }
           setText('batChartMeta', metaText);
         } else {
@@ -2141,7 +2145,14 @@ void WebManager::handleRoot() {
             if (bat.status === "Full") {
               timeText = "Full (External Power)";
             } else if (bat.status === "Charging / USB") {
-              timeText = "Charging via USB";
+              const tRemaining = bat.time_remaining;
+              if (tRemaining > 0) {
+                const tHrs = Math.floor(tRemaining / 3600);
+                const tMins = Math.floor((tRemaining % 3600) / 60);
+                timeText = `${tHrs}h ${tMins}m to full (Charging)`;
+              } else {
+                timeText = "Charging via USB";
+              }
             } else {
               const tRemaining = bat.time_remaining;
               if (tRemaining > 0) {
@@ -2502,7 +2513,7 @@ void WebManager::handleRoot() {
       xhr.send(formData);
     });
 
-    (async function boot() {
+    window.addEventListener('load', async () => {
       onRangeChanged();
       await loadConfig();
       await loadSdTree();
@@ -2514,13 +2525,13 @@ void WebManager::handleRoot() {
 
       loadUiIntervals();
       startTimers(true);
-    })();
+    });
   </script>
 </body>
 </html>
 )HTML";
 
-  server_.send_P(200, "text/html", html);
+  server_.send_P(200, "text/html", html, sizeof(html) - 1);
 }
 
 void WebManager::handleLocalUPlotJs() {

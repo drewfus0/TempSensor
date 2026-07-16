@@ -205,6 +205,25 @@ void BatteryManager::updateStatusAndPredictions(uint32_t nowMs) {
     // Dynamic estimation: remaining capacity (%) * smoothed seconds per 1%
     timeRemainingS_ = static_cast<int32_t>(percent_ * smoothedSecondsPerPercent_);
   }
+  else if (strcmp(status_, "Charging / USB") == 0) {
+    if (slope_ > 0.0001f) {
+      float remainingVolts = 4.15f - voltage_;
+      if (remainingVolts <= 0.0f) {
+        timeRemainingS_ = 0;
+      } else {
+        float minutesToFull = remainingVolts / slope_;
+        timeRemainingS_ = static_cast<int32_t>(minutesToFull * 60.0f);
+        if (timeRemainingS_ > 86400) { // Limit to max 24 hours
+          timeRemainingS_ = -1;
+        }
+      }
+    } else {
+      timeRemainingS_ = -1; // Not enough slope history or slope too flat
+    }
+  }
+  else if (strcmp(status_, "Full") == 0) {
+    timeRemainingS_ = 0;
+  }
 
   lastStatus_ = status_;
 }
