@@ -38,6 +38,8 @@ class LoggerManager {
   bool writeCsvHeaderIfMissing();
   bool writeEventHeaderIfMissing();
   void calibrateCsvFile(const char* filepath, time_t bootEpoch);
+  void initBatteryLogFile();
+  size_t batteryWriteIndex_ = 0;
 
   RingBuffer<Sample, AppConfig::MAX_LOG_QUEUE_SIZE> queue_;
   bool sdHealthy_ = false;

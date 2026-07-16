@@ -968,7 +968,7 @@ void WebManager::handleRoot() {
 
         <section class='card' style='margin-top: 20px;'>
           <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>
-            <h2 style='margin: 0;'>Battery Voltage History (24h)</h2>
+            <h2 style='margin: 0;'>Battery Voltage History (48h)</h2>
             <button class='btn' id='btnDownloadBatCsv' style='padding: 6px 12px; font-size: 12px; margin: 0;'>Download CSV</button>
           </div>
           <div class='chart-container' id='batChartParent' style='height: 250px;'>
@@ -1705,8 +1705,7 @@ void WebManager::handleRoot() {
 
     async function loadBatteryHistory() {
       try {
-        const now = new Date();
-        const twentyFourHoursAgoEpoch = (now.getTime() - 24 * 60 * 60 * 1000) / 1000;
+        // Load all records in the log file (up to 2 days capped by backend pruning)
         
         const response = await fetch('/api/logs/download?file=/logs/battery.bin');
         if (!response.ok) {
@@ -1735,6 +1734,7 @@ void WebManager::handleRoot() {
         for (let i = 0; i < numRecords; i++) {
           const offset = i * recordSize;
           const epochTime = view.getUint32(offset, true);
+          if (epochTime === 0) continue;
           const voltage = view.getFloat32(offset + 4, true);
           const percent = view.getUint8(offset + 8);
           const chargingState = view.getUint8(offset + 9);
@@ -1754,9 +1754,7 @@ void WebManager::handleRoot() {
             tsStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
           }
 
-          if (epochTime < 1000000 || epochTime >= twentyFourHoursAgoEpoch) {
-            dataset.push({ ts: epochTime, tsStr: tsStr, v: voltage, p: percent, s: status, tr: timeRemaining });
-          }
+          dataset.push({ ts: epochTime, tsStr: tsStr, v: voltage, p: percent, s: status, tr: timeRemaining });
         }
 
         dataset.sort((a, b) => a.ts - b.ts);
@@ -1777,7 +1775,7 @@ void WebManager::handleRoot() {
           }
           setText('batChartMeta', metaText);
         } else {
-          setText('batChartMeta', 'No battery records found in the last 24 hours.');
+          setText('batChartMeta', 'No battery records found in the log file.');
         }
         lastBatteryFetchTime = Date.now();
       } catch (err) {

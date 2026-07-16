@@ -28,6 +28,8 @@ bool LoggerManager::begin(int sdCsPin, int sckPin, int misoPin, int mosiPin) {
     return false;
   }
 
+  initBatteryLogFile();
+
   return true;
 }
 
@@ -380,10 +382,10 @@ bool LoggerManager::logBattery(time_t epochTime, float voltage, int percent, con
   }
 
   const char* filepath = "/logs/battery.bin";
-  File file = SD.open(filepath, "a");
+  File file = SD.open(filepath, "r+");
   if (!file) {
     sdHealthy_ = false;
-    Serial.println("[Logger] Failed to open /logs/battery.bin for writing");
+    Serial.println("[Logger] Failed to open /logs/battery.bin for circular writing");
     return false;
   }
 
@@ -394,17 +396,93 @@ bool LoggerManager::logBattery(time_t epochTime, float voltage, int percent, con
   record.chargingState = BatteryStatusToState(status);
   record.timeRemainingS = timeRemainingS;
 
+  file.seek(batteryWriteIndex_ * sizeof(BatteryRecord));
+
   size_t written = file.write(reinterpret_cast<const uint8_t*>(&record), sizeof(BatteryRecord));
   file.flush();
   file.close();
 
   if (written < sizeof(BatteryRecord)) {
     sdHealthy_ = false;
-    Serial.println("[Logger] Battery binary write failed");
+    Serial.println("[Logger] Battery binary circular write failed");
     return false;
   }
 
+  batteryWriteIndex_ = (batteryWriteIndex_ + 1) % 2880;
+
   return true;
+}
+
+void LoggerManager::initBatteryLogFile() {
+  if (!sdHealthy_) return;
+
+  const char* filepath = "/logs/battery.bin";
+  constexpr size_t recordSize = sizeof(BatteryRecord);
+  constexpr size_t totalSize = 2880 * recordSize;
+
+  bool exists = SD.exists(filepath);
+  bool sizeMatch = false;
+
+  if (exists) {
+    File file = SD.open(filepath, "r");
+    if (file) {
+      sizeMatch = (file.size() == totalSize);
+      file.close();
+    }
+  }
+
+  if (!exists || !sizeMatch) {
+    Serial.println("[Logger] Pre-allocating circular battery.bin (2880 records / 40.3KB)...");
+    
+    if (exists) {
+      SD.remove(filepath);
+    }
+
+    File file = SD.open(filepath, "w");
+    if (file) {
+      BatteryRecord dummyRecord;
+      memset(&dummyRecord, 0, sizeof(BatteryRecord));
+      
+      uint8_t buffer[280]; // 20 records at a time
+      for (int i = 0; i < 20; ++i) {
+        memcpy(buffer + i * recordSize, &dummyRecord, recordSize);
+      }
+      for (size_t i = 0; i < 2880; i += 20) {
+        file.write(buffer, 280);
+      }
+      file.flush();
+      file.close();
+      batteryWriteIndex_ = 0;
+    } else {
+      Serial.println("[Logger] Failed to create /logs/battery.bin");
+      sdHealthy_ = false;
+      return;
+    }
+  } else {
+    File file = SD.open(filepath, "r");
+    if (file) {
+      uint32_t maxEpoch = 0;
+      size_t maxIndex = 0;
+      BatteryRecord tempRecord;
+
+      for (size_t i = 0; i < 2880; ++i) {
+        if (file.read(reinterpret_cast<uint8_t*>(&tempRecord), recordSize) == recordSize) {
+          if (tempRecord.epochTime > maxEpoch) {
+            maxEpoch = tempRecord.epochTime;
+            maxIndex = i;
+          }
+        }
+      }
+      file.close();
+
+      if (maxEpoch == 0) {
+        batteryWriteIndex_ = 0;
+      } else {
+        batteryWriteIndex_ = (maxIndex + 1) % 2880;
+      }
+      Serial.printf("[Logger] Found battery circular log write index: %d (latest epoch: %u)\n", batteryWriteIndex_, maxEpoch);
+    }
+  }
 }
 
 bool LoggerManager::calibrateEstimatedLogs(time_t bootEpoch) {
@@ -514,7 +592,7 @@ bool LoggerManager::calibrateEstimatedLogs(time_t bootEpoch) {
           break;
         }
 
-        if (record.epochTime < 1000000) {
+        if (record.epochTime > 0 && record.epochTime < 1000000) {
           record.epochTime = static_cast<uint32_t>(bootEpoch) + record.epochTime;
           batFile.seek(pos);
           batFile.write(reinterpret_cast<const uint8_t*>(&record), sizeof(BatteryRecord));
