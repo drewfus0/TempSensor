@@ -155,7 +155,7 @@ void WebManager::handleRoot() {
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 20px;
+      padding: 0 20px 20px 20px;
       font-family: var(--font-main);
       background: linear-gradient(135deg, #070a13 0%, #0f172a 100%);
       color: var(--text);
@@ -168,8 +168,8 @@ void WebManager::handleRoot() {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 24px;
-      padding-bottom: 16px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
       border-bottom: 1px solid var(--card-border);
       flex-wrap: wrap;
       gap: 16px;
@@ -666,12 +666,47 @@ void WebManager::handleRoot() {
       color: var(--accent);
     }
     
+    .header-container {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(9, 13, 22, 0.95);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 20px 20px 0 20px;
+      margin-bottom: 24px;
+    }
+    .countdown-bar {
+      display: flex;
+      justify-content: flex-start;
+      gap: 16px;
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 0.75rem;
+      color: var(--text-sub);
+      flex-wrap: wrap;
+      border: 1px solid var(--card-border);
+    }
+    .countdown-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .countdown-val {
+      font-weight: 600;
+      color: var(--accent);
+      font-family: var(--font-mono);
+    }
+
     /* Tab System Styles */
     .tab-bar {
       display: flex;
       gap: 12px;
-      margin-bottom: 24px;
-      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 0px;
+      border-bottom: none;
       padding-bottom: 8px;
     }
     .tab-btn {
@@ -746,26 +781,39 @@ void WebManager::handleRoot() {
     </div>
   </div>
 
-  <div class='wrap'>
-    <div class='head'>
-      <div class='title-area'>
-        <div class='heartbeat' id='heartbeat'></div>
-        <h1>TEMPSENSOR LOCAL</h1>
+  <div class='header-container'>
+    <div class='wrap'>
+      <div class='head'>
+        <div class='title-area'>
+          <div class='heartbeat' id='heartbeat'></div>
+          <h1>TEMPSENSOR LOCAL</h1>
+        </div>
+        <div class='pills'>
+          <div class='pill'><span style='color: var(--text-sub)'>WiFi:</span> <span id='pillWifi'>-</span></div>
+          <div class='pill'><span style='color: var(--text-sub)'>SD:</span> <span id='pillSd'>-</span></div>
+          <div class='pill'><span style='color: var(--text-sub)'>NTP:</span> <span id='pillNtp'>-</span></div>
+          <div class='pill'><span style='color: var(--text-sub)'>IP:</span> <span id='pillIp'>-</span></div>
+          <div class='pill'><span style='color: var(--text-sub)'>Updated:</span> <span id='pillRef'>-</span></div>
+        </div>
       </div>
-      <div class='pills'>
-        <div class='pill'><span style='color: var(--text-sub)'>WiFi:</span> <span id='pillWifi'>-</span></div>
-        <div class='pill'><span style='color: var(--text-sub)'>SD:</span> <span id='pillSd'>-</span></div>
-        <div class='pill'><span style='color: var(--text-sub)'>NTP:</span> <span id='pillNtp'>-</span></div>
-        <div class='pill'><span style='color: var(--text-sub)'>IP:</span> <span id='pillIp'>-</span></div>
-        <div class='pill'><span style='color: var(--text-sub)'>Updated:</span> <span id='pillRef'>-</span></div>
-      </div>
-    </div>
 
-    <div class='tab-bar'>
-      <button class='tab-btn active' onclick="showTab('dashboard')" id='tab-dashboard'>Dashboard</button>
-      <button class='tab-btn' onclick="showTab('files')" id='tab-files'>File Manager</button>
-      <button class='tab-btn' onclick="showTab('settings')" id='tab-settings'>Settings</button>
+      <div class='countdown-bar'>
+        <div class='countdown-item'><span>Next Live:</span><span class='countdown-val' id='cntLive'>--s</span></div>
+        <div class='countdown-item'><span>Next Health:</span><span class='countdown-val' id='cntHealth'>--s</span></div>
+        <div class='countdown-item'><span>Next Events:</span><span class='countdown-val' id='cntEvents'>--s</span></div>
+        <div class='countdown-item'><span>Next SD Tree:</span><span class='countdown-val' id='cntSdTree'>--s</span></div>
+        <div class='countdown-item'><span>Next Battery:</span><span class='countdown-val' id='cntBattery'>--s</span></div>
+      </div>
+
+      <div class='tab-bar'>
+        <button class='tab-btn active' onclick="showTab('dashboard')" id='tab-dashboard'>Dashboard</button>
+        <button class='tab-btn' onclick="showTab('files')" id='tab-files'>File Manager</button>
+        <button class='tab-btn' onclick="showTab('settings')" id='tab-settings'>Settings</button>
+      </div>
     </div>
+  </div>
+
+  <div class='wrap'>
 
     <div id='content-dashboard' class='tab-content active'>
       <div class='grid-main'>
@@ -1051,6 +1099,36 @@ void WebManager::handleRoot() {
     let timerSdTree = null;
     let timerBattery = null;
 
+    let lastLiveFetchTime = Date.now();
+    let lastHealthFetchTime = Date.now();
+    let lastEventsFetchTime = Date.now();
+    let lastSdTreeFetchTime = Date.now();
+    let lastBatteryFetchTime = Date.now();
+
+    function updateCountdowns() {
+      const now = Date.now();
+      
+      const liveSec = parseInt($('uiIntervalLive').value) || 15;
+      const healthSec = parseInt($('uiIntervalHealth').value) || 20;
+      const eventsSec = parseInt($('uiIntervalEvents').value) || 60;
+      const sdTreeSec = parseInt($('uiIntervalSdTree').value) || 60;
+      const batterySec = parseInt($('uiIntervalBattery').value) || 60;
+
+      const liveRem = Math.max(0, Math.ceil((lastLiveFetchTime + liveSec * 1000 - now) / 1000));
+      const healthRem = Math.max(0, Math.ceil((lastHealthFetchTime + healthSec * 1000 - now) / 1000));
+      const eventsRem = Math.max(0, Math.ceil((lastEventsFetchTime + eventsSec * 1000 - now) / 1000));
+      const sdTreeRem = Math.max(0, Math.ceil((lastSdTreeFetchTime + sdTreeSec * 1000 - now) / 1000));
+      const batteryRem = Math.max(0, Math.ceil((lastBatteryFetchTime + batterySec * 1000 - now) / 1000));
+
+      $('cntLive').textContent = liveRem + 's';
+      $('cntHealth').textContent = healthRem + 's';
+      $('cntEvents').textContent = eventsRem + 's';
+      $('cntSdTree').textContent = sdTreeRem + 's';
+      $('cntBattery').textContent = batteryRem + 's';
+    }
+
+    setInterval(updateCountdowns, 1000);
+
     function loadUiIntervals() {
       $('uiIntervalLive').value = localStorage.getItem('uiIntervalLive') || 15;
       $('uiIntervalHealth').value = localStorage.getItem('uiIntervalHealth') || 20;
@@ -1083,13 +1161,26 @@ void WebManager::handleRoot() {
       const sdTreeSec = parseInt($('uiIntervalSdTree').value) || 60;
       const batterySec = parseInt($('uiIntervalBattery').value) || 60;
 
+      const now = Date.now();
       if (staggered) {
+        lastLiveFetchTime = now - (liveSec - 5) * 1000;
+        lastHealthFetchTime = now - (healthSec - 10) * 1000;
+        lastEventsFetchTime = now - (eventsSec - 20) * 1000;
+        lastSdTreeFetchTime = now - (sdTreeSec - 40) * 1000;
+        lastBatteryFetchTime = now - (batterySec - 45) * 1000;
+
         setTimeout(() => { timerLive = setInterval(loadLive, liveSec * 1000); }, 5000);
         setTimeout(() => { timerHealth = setInterval(loadHealth, healthSec * 1000); }, 10000);
         setTimeout(() => { timerEvents = setInterval(loadEvents, eventsSec * 1000); }, 20000);
         setTimeout(() => { timerSdTree = setInterval(loadSdTree, sdTreeSec * 1000); }, 40000);
         setTimeout(() => { timerBattery = setInterval(loadBatteryHistory, batterySec * 1000); }, 45000);
       } else {
+        lastLiveFetchTime = now;
+        lastHealthFetchTime = now;
+        lastEventsFetchTime = now;
+        lastSdTreeFetchTime = now;
+        lastBatteryFetchTime = now;
+
         timerLive = setInterval(loadLive, liveSec * 1000);
         timerHealth = setInterval(loadHealth, healthSec * 1000);
         timerEvents = setInterval(loadEvents, eventsSec * 1000);
@@ -1684,6 +1775,7 @@ void WebManager::handleRoot() {
         } else {
           setText('batChartMeta', 'No battery records found in the last 24 hours.');
         }
+        lastBatteryFetchTime = Date.now();
       } catch (err) {
         console.error("Battery history load error", err);
         setText('batChartMeta', 'Failed to load battery history: ' + err.message);
@@ -1950,6 +2042,7 @@ void WebManager::handleRoot() {
                    </div>`;
         }
         container.innerHTML = html;
+        lastSdTreeFetchTime = Date.now();
       } catch (err) {
         $('sdtree').innerHTML = '<div style="padding: 10px; color: var(--error);">' + err.message + '</div>';
       }
@@ -1987,6 +2080,7 @@ void WebManager::handleRoot() {
           html += '</div>';
         }
         timeline.innerHTML = html;
+        lastEventsFetchTime = Date.now();
       } catch (err) {
         $('eventsTimeline').innerHTML = '<div style="color: var(--error); font-size:0.75rem;">' + err.message + '</div>';
       }
@@ -2006,6 +2100,7 @@ void WebManager::handleRoot() {
         }
         lastLive = live;
         updatePills(lastLive, lastHealth);
+        lastLiveFetchTime = Date.now();
       } catch (err) {
         console.error("Live fetch error", err);
       }
@@ -2090,6 +2185,7 @@ void WebManager::handleRoot() {
         }
         lastHealth = health;
         updatePills(lastLive, lastHealth);
+        lastHealthFetchTime = Date.now();
       } catch (err) {
         console.error("Health fetch error", err);
       }
