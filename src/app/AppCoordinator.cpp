@@ -134,10 +134,8 @@ void AppCoordinator::loop() {
   // Log battery statistics to /logs/battery.csv every 60 seconds
   if (nowMs - lastBatteryLogMs_ >= 60000) {
     lastBatteryLogMs_ = nowMs;
-    char ts[32]{};
-    TimestampQuality quality = TimestampQuality::Estimated;
-    timeManager_.getTimestamp(ts, sizeof(ts), quality);
-    loggerManager_.logBattery(ts, batteryManager_.getVoltage(), batteryManager_.getPercent(), batteryManager_.getStatus());
+    time_t epochTime = time(nullptr);
+    loggerManager_.logBattery(epochTime, batteryManager_.getVoltage(), batteryManager_.getPercent(), batteryManager_.getStatus(), batteryManager_.getTimeRemainingSeconds());
   }
 
   if (WiFi.status() == WL_CONNECTED) {

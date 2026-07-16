@@ -18,7 +18,7 @@ void BatteryManager::begin() {
   // Initialize tracking baseline
   lastRecordedPercent_ = percent_;
   lastPercentChangeMs_ = millis();
-  smoothedSecondsPerPercent_ = 540.0f; // Default (15 hours)
+  smoothedSecondsPerPercent_ = 1080.0f; // Default (30 hours for larger 3000mAh+ battery)
   lastStatus_ = "Unknown";
 
   // Initialize history buffer

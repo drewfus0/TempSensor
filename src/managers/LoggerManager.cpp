@@ -374,32 +374,33 @@ bool LoggerManager::attemptRecovery() {
   return false;
 }
 
-bool LoggerManager::logBattery(const char* timestamp, float voltage, int percent, const char* status) {
+bool LoggerManager::logBattery(time_t epochTime, float voltage, int percent, const char* status, int32_t timeRemainingS) {
   if (!sdHealthy_) {
     return false;
   }
 
-  const char* filepath = "/logs/battery.csv";
-  bool exists = SD.exists(filepath);
-
+  const char* filepath = "/logs/battery.bin";
   File file = SD.open(filepath, "a");
   if (!file) {
     sdHealthy_ = false;
-    Serial.println("[Logger] Failed to open /logs/battery.csv for writing");
+    Serial.println("[Logger] Failed to open /logs/battery.bin for writing");
     return false;
   }
 
-  if (!exists || file.size() == 0) {
-    file.println("timestamp,voltage,percent,status");
-  }
+  BatteryRecord record;
+  record.epochTime = static_cast<uint32_t>(epochTime);
+  record.voltage = voltage;
+  record.percent = static_cast<uint8_t>(percent);
+  record.chargingState = BatteryStatusToState(status);
+  record.timeRemainingS = timeRemainingS;
 
-  const int written = file.printf("%s,%.2f,%d,%s\n", timestamp, voltage, percent, status);
+  size_t written = file.write(reinterpret_cast<const uint8_t*>(&record), sizeof(BatteryRecord));
   file.flush();
   file.close();
 
-  if (written <= 0) {
+  if (written < sizeof(BatteryRecord)) {
     sdHealthy_ = false;
-    Serial.println("[Logger] Battery log write failed");
+    Serial.println("[Logger] Battery binary write failed");
     return false;
   }
 
@@ -500,8 +501,30 @@ bool LoggerManager::calibrateEstimatedLogs(time_t bootEpoch) {
   // 3. Calibrate /logs/events.csv
   calibrateCsvFile(AppConfig::EVENT_FILE_PATH, bootEpoch);
 
-  // 4. Calibrate /logs/battery.csv
-  calibrateCsvFile("/logs/battery.csv", bootEpoch);
+  // 4. Calibrate /logs/battery.bin in-place
+  if (SD.exists("/logs/battery.bin")) {
+    File batFile = SD.open("/logs/battery.bin", "r+");
+    if (batFile) {
+      Serial.println("[Logger] Calibrating /logs/battery.bin in-place...");
+      uint32_t calibratedCount = 0;
+      while (batFile.available() >= (int)sizeof(BatteryRecord)) {
+        uint32_t pos = batFile.position();
+        BatteryRecord record;
+        if (batFile.read(reinterpret_cast<uint8_t*>(&record), sizeof(BatteryRecord)) != sizeof(BatteryRecord)) {
+          break;
+        }
+
+        if (record.epochTime < 1000000) {
+          record.epochTime = static_cast<uint32_t>(bootEpoch) + record.epochTime;
+          batFile.seek(pos);
+          batFile.write(reinterpret_cast<const uint8_t*>(&record), sizeof(BatteryRecord));
+          calibratedCount++;
+        }
+      }
+      batFile.close();
+      Serial.printf("[Logger] Calibrated %u battery records in battery.bin\n", calibratedCount);
+    }
+  }
 
   return true;
 }

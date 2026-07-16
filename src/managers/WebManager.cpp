@@ -919,7 +919,10 @@ void WebManager::handleRoot() {
         </section>
 
         <section class='card' style='margin-top: 20px;'>
-          <h2>Battery Voltage History (24h)</h2>
+          <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>
+            <h2 style='margin: 0;'>Battery Voltage History (24h)</h2>
+            <button class='btn' id='btnDownloadBatCsv' style='padding: 6px 12px; font-size: 12px; margin: 0;'>Download CSV</button>
+          </div>
           <div class='chart-container' id='batChartParent' style='height: 250px;'>
             <div id='batChart'></div>
           </div>
@@ -1014,6 +1017,7 @@ void WebManager::handleRoot() {
     
     let uplotInstance = null;
     let batChartInstance = null;
+    let loadedBatteryData = [];
     let historyLoaded = false;
     let historyDataset = [];
     let lastLive = null;
@@ -1533,51 +1537,78 @@ void WebManager::handleRoot() {
         const now = new Date();
         const twentyFourHoursAgoEpoch = (now.getTime() - 24 * 60 * 60 * 1000) / 1000;
         
-        const csvText = await fetchText('/api/logs/download?file=/logs/battery.csv');
-        if (!csvText || csvText.trim() === '') {
+        const response = await fetch('/api/logs/download?file=/logs/battery.bin');
+        if (!response.ok) {
+          if (response.status === 404) {
+            setText('batChartMeta', 'No battery log file found yet (waiting for first 60s sample).');
+            renderBatteryChart([]);
+            loadedBatteryData = [];
+            return;
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength === 0) {
           setText('batChartMeta', 'No battery data file found or file empty.');
           renderBatteryChart([]);
+          loadedBatteryData = [];
           return;
         }
 
-        const lines = csvText.split('\n');
+        const recordSize = 14;
+        const view = new DataView(arrayBuffer);
+        const numRecords = Math.floor(arrayBuffer.byteLength / recordSize);
         const dataset = [];
 
-        for (let i = 1; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (line === '') continue;
+        for (let i = 0; i < numRecords; i++) {
+          const offset = i * recordSize;
+          const epochTime = view.getUint32(offset, true);
+          const voltage = view.getFloat32(offset + 4, true);
+          const percent = view.getUint8(offset + 8);
+          const chargingState = view.getUint8(offset + 9);
+          const timeRemaining = view.getInt32(offset + 10, true);
 
-          const parts = line.split(',');
-          if (parts.length < 3) continue;
+          let status = 'Unknown';
+          if (chargingState === 1) status = 'Discharging';
+          else if (chargingState === 2) status = 'Charging / USB';
+          else if (chargingState === 3) status = 'Full';
 
-          const ts = parts[0];
-          const voltage = parseFloat(parts[1]);
-          const percent = parseInt(parts[2]);
-          const status = parts[3] || 'Unknown';
+          let tsStr = '';
+          if (epochTime < 1000000) {
+            tsStr = `uptime+${epochTime}s`;
+          } else {
+            const d = new Date(epochTime * 1000);
+            const pad = (n) => String(n).padStart(2, '0');
+            tsStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+          }
 
-          const epochSec = Date.parse(ts.replace(' ', 'T')) / 1000;
-          if (!isNaN(epochSec) && epochSec >= twentyFourHoursAgoEpoch) {
-            dataset.push({ ts: epochSec, v: voltage, p: percent, s: status });
+          if (epochTime < 1000000 || epochTime >= twentyFourHoursAgoEpoch) {
+            dataset.push({ ts: epochTime, tsStr: tsStr, v: voltage, p: percent, s: status, tr: timeRemaining });
           }
         }
 
         dataset.sort((a, b) => a.ts - b.ts);
+        loadedBatteryData = dataset;
         renderBatteryChart(dataset);
 
         if (dataset.length > 0) {
           const lastPoint = dataset[dataset.length - 1];
-          setText('batChartMeta', `Loaded ${dataset.length} points. Latest: ${lastPoint.v.toFixed(2)}V (${lastPoint.p}%) - ${lastPoint.s}`);
+          let metaText = `Loaded ${dataset.length} points. Latest: ${lastPoint.v.toFixed(2)}V (${lastPoint.p}%) - ${lastPoint.s}`;
+          if (lastPoint.tr && lastPoint.tr > 0) {
+            const hours = Math.floor(lastPoint.tr / 3600);
+            const mins = Math.floor((lastPoint.tr % 3600) / 60);
+            metaText += ` (${hours}h ${mins}m remaining)`;
+          }
+          setText('batChartMeta', metaText);
         } else {
           setText('batChartMeta', 'No battery records found in the last 24 hours.');
         }
       } catch (err) {
         console.error("Battery history load error", err);
-        if (err.message.includes('HTTP 404')) {
-          setText('batChartMeta', 'No battery log file found yet (waiting for first 60s sample).');
-        } else {
-          setText('batChartMeta', 'Failed to load battery history: ' + err.message);
-        }
+        setText('batChartMeta', 'Failed to load battery history: ' + err.message);
         renderBatteryChart([]);
+        loadedBatteryData = [];
       }
     }
 
@@ -1774,6 +1805,26 @@ void WebManager::handleRoot() {
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);
       link.setAttribute('download', 'filtered_log.csv');
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function downloadBatteryCSV() {
+      if (!loadedBatteryData || loadedBatteryData.length === 0) {
+        alert("No battery records loaded yet.");
+        return;
+      }
+      let csvContent = "timestamp,voltage,percent,status,time_remaining_s\n";
+      for (const pt of loadedBatteryData) {
+        csvContent += pt.tsStr + "," + pt.v.toFixed(2) + "," + pt.p + "," + pt.s + "," + pt.tr + "\n";
+      }
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", "battery.csv");
       link.style.visibility = 'hidden';
       document.body.appendChild(link);
       link.click();
@@ -2118,6 +2169,7 @@ void WebManager::handleRoot() {
 
     $('btnLoad').addEventListener('click', loadHistory);
     $('btnDownloadCsv').addEventListener('click', downloadFilteredCSV);
+    $('btnDownloadBatCsv').addEventListener('click', downloadBatteryCSV);
     $('range').addEventListener('change', onRangeChanged);
     $('binSize').addEventListener('change', () => {
       const isCustom = $('binSize').value === 'custom';
@@ -2966,6 +3018,8 @@ void WebManager::handleLogDownload() {
     return;
   }
 
+
+
   File file = SD.open(path, "r");
   if (!file || file.isDirectory()) {
     if (file) file.close();
@@ -3035,6 +3089,8 @@ void WebManager::streamSdTree(File dir, const String& parentPath, bool& first) {
 
     unsigned long size = entry.isDirectory() ? 0 : entry.size();
     bool isDir = entry.isDirectory();
+
+
 
     String item = "{\"path\":\"" + path + "\",\"name\":\"" + name + "\",\"size\":" + String(size) + ",\"is_dir\":" + (isDir ? "true" : "false") + "}";
     server_.sendContent(item);
