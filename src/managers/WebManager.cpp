@@ -1195,14 +1195,24 @@ void WebManager::handleRoot() {
       for (const t of tasks) {
         const intervalSec = parseInt($(t.intervalKey).value) || getTaskDefault(t.intervalKey);
         const intervalMs = intervalSec * 1000;
-        if (now - t.lastRun >= intervalMs) {
+        const overdueMs = (now - t.lastRun) - intervalMs;
+        if (overdueMs >= 0) {
+          t.overdueMs = overdueMs;
           dueTasks.push(t);
         }
       }
 
       if (dueTasks.length === 0) return;
 
-      dueTasks.sort((a, b) => b.priority - a.priority);
+      // Sort primarily by how overdue the task is (Maximum Overdue First)
+      // If tasks became due at roughly the same time (within 1s), use static priority as a tie-breaker
+      dueTasks.sort((a, b) => {
+        const diff = b.overdueMs - a.overdueMs;
+        if (Math.abs(diff) < 1000) {
+          return b.priority - a.priority;
+        }
+        return diff;
+      });
 
       const taskToRun = dueTasks[0];
       taskToRun.lastRun = now;
