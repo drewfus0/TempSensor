@@ -18,7 +18,7 @@ void BatteryManager::begin() {
   // Initialize tracking baseline
   lastRecordedPercent_ = percent_;
   lastPercentChangeMs_ = millis();
-  smoothedSecondsPerPercent_ = 600.0f; // Default (approx. 16.7 hours total runtime, matching 15-18h profile)
+  smoothedSecondsPerPercent_ = 1000.0f; // Default for new battery (approx. 27.8 hours total runtime, matching ~31h profile)
   lastStatus_ = "Unknown";
 
   // Initialize history buffer
@@ -127,7 +127,8 @@ float BatteryManager::calculateSlope() const {
 
 void BatteryManager::updateStatusAndPredictions(uint32_t nowMs) {
   // Determine charging vs discharging using slope (once we have at least 3 minutes of history)
-  bool isSlopeCharging = (historyCount_ >= 3 && slope_ >= 0.0006f);
+  // Under low battery (voltage < 4.0V), require a stronger slope (5mV/min) to ignore raw ADC noise fluctuations
+  bool isSlopeCharging = (historyCount_ >= 3 && (slope_ >= (voltage_ < 4.0f ? 0.005f : 0.0006f)));
   bool isSlopeDischarging = (historyCount_ >= 3 && slope_ <= -0.0002f);
 
   if (isSlopeCharging) {

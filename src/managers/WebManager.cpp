@@ -701,6 +701,31 @@ void WebManager::handleRoot() {
       font-family: var(--font-mono);
     }
 
+    .btn-refresh {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: var(--text-sub);
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1.1rem;
+      font-weight: bold;
+      transition: all 0.2s ease;
+      padding: 0;
+    }
+    .btn-refresh:hover {
+      background: var(--accent);
+      color: var(--text);
+      border-color: var(--accent);
+    }
+    .btn-refresh:active {
+      transform: scale(0.92);
+    }
+
     /* Tab System Styles */
     .tab-bar {
       display: flex;
@@ -819,7 +844,10 @@ void WebManager::handleRoot() {
       <div class='grid-main'>
         <div style='display: flex; flex-direction: column; gap: 20px;'>
         <section class='card'>
-          <h2>Live Snapshot</h2>
+          <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>
+            <h2 style='margin: 0;'>Live Snapshot</h2>
+            <button class='btn-refresh' onclick='forceRefreshTask("live")' title='Force update live telemetry'>⟳</button>
+          </div>
           <div class='readings'>
             <div class='reading-row'>
               <div class='reading-label'>Temperature</div>
@@ -840,7 +868,10 @@ void WebManager::handleRoot() {
         </section>
 
         <section class='card'>
-          <h2>Health Snapshot</h2>
+          <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>
+            <h2 style='margin: 0;'>Health Snapshot</h2>
+            <button class='btn-refresh' onclick='forceRefreshTask("health")' title='Force update system health'>⟳</button>
+          </div>
           <div class='health-grid'>
             <div class='health-item full-width'>
               <div class='health-lbl'>Uptime</div>
@@ -896,7 +927,10 @@ void WebManager::handleRoot() {
         </section>
 
         <section class='card'>
-          <h2>Event Timeline</h2>
+          <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>
+            <h2 style='margin: 0;'>Event Timeline</h2>
+            <button class='btn-refresh' onclick='forceRefreshTask("events")' title='Force update events list'>⟳</button>
+          </div>
           <div class='scroll-area'>
             <div class='timeline-container' id='eventsTimeline'>
               <div style='color: var(--text-sub);'>loading...</div>
@@ -969,7 +1003,10 @@ void WebManager::handleRoot() {
         <section class='card' style='margin-top: 20px;'>
           <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>
             <h2 style='margin: 0;'>Battery Voltage History (48h)</h2>
-            <button class='btn' id='btnDownloadBatCsv' style='padding: 6px 12px; font-size: 12px; margin: 0;'>Download CSV</button>
+            <div style='display: flex; gap: 8px; align-items: center;'>
+              <button class='btn-refresh' onclick='forceRefreshTask("battery")' title='Force update battery history'>⟳</button>
+              <button class='btn' id='btnDownloadBatCsv' style='padding: 6px 12px; font-size: 12px; margin: 0;'>Download CSV</button>
+            </div>
           </div>
           <div class='chart-container' id='batChartParent' style='height: 250px;'>
             <div id='batChart'></div>
@@ -984,7 +1021,10 @@ void WebManager::handleRoot() {
 
     <div id='content-files' class='tab-content'>
       <section class='card'>
-        <h2>SD File Explorer</h2>
+        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>
+          <h2 style='margin: 0;'>SD File Explorer</h2>
+          <button class='btn-refresh' onclick='forceRefreshTask("sdtree")' title='Force update file explorer'>⟳</button>
+        </div>
         <div id='sdtree' style='background: rgba(0, 0, 0, 0.25); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.78rem; line-height: 1.4; color: #a5f3fc; white-space: normal;'>loading...</div>
       </section>
     </div> <!-- End content-files -->
@@ -1095,6 +1135,7 @@ void WebManager::handleRoot() {
     let loadedBatteryData = [];
     let tasks = [];
     let schedulerTimer = null;
+    let isFetching = false;
 
     function initTasks() {
       const now = Date.now();
@@ -1186,8 +1227,28 @@ void WebManager::handleRoot() {
       schedulerTimer = setInterval(schedulerTick, 10000);
     }
 
+    function setRefreshButtonsState(disabled, spinningBtn = null) {
+      const allRefreshBtns = document.querySelectorAll('.btn-refresh');
+      allRefreshBtns.forEach(b => {
+        b.disabled = disabled;
+        if (disabled) {
+          if (b === spinningBtn) {
+            b.style.opacity = '0.7';
+            b.style.cursor = 'wait';
+          } else {
+            b.style.opacity = '0.3';
+            b.style.cursor = 'not-allowed';
+          }
+        } else {
+          b.style.transform = 'none';
+          b.style.opacity = '1';
+          b.style.cursor = 'pointer';
+        }
+      });
+    }
+
     async function schedulerTick() {
-      if (isLoadingHistory) return;
+      if (isLoadingHistory || isFetching) return;
       
       const now = Date.now();
       const dueTasks = [];
@@ -1217,10 +1278,43 @@ void WebManager::handleRoot() {
       const taskToRun = dueTasks[0];
       taskToRun.lastRun = now;
       
+      isFetching = true;
+      setRefreshButtonsState(true);
+      
       try {
         await taskToRun.action();
       } catch (err) {
         console.error(`Scheduler failed to run ${taskToRun.name}:`, err);
+      } finally {
+        isFetching = false;
+        setRefreshButtonsState(false);
+      }
+    }
+
+    async function forceRefreshTask(name) {
+      if (isLoadingHistory || isFetching) return;
+      const t = tasks.find(x => x.name === name);
+      if (!t) return;
+      
+      const btn = event.currentTarget;
+      isFetching = true;
+      setRefreshButtonsState(true, btn);
+      
+      if (btn) {
+        btn.style.transition = 'transform 0.4s ease';
+        btn.style.transform = 'rotate(180deg)';
+      }
+
+      t.lastRun = Date.now();
+      try {
+        await t.action();
+      } catch (err) {
+        console.error(`Force refresh failed for ${name}:`, err);
+      } finally {
+        setTimeout(() => {
+          isFetching = false;
+          setRefreshButtonsState(false);
+        }, 300);
       }
     }
 
