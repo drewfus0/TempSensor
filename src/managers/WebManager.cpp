@@ -1002,7 +1002,7 @@ void WebManager::handleRoot() {
 
         <section class='card' style='margin-top: 20px;'>
           <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>
-            <h2 style='margin: 0;'>Battery History & Prediction (3 Days)</h2>
+            <h2 style='margin: 0;'>Battery History & Prediction</h2>
             <div style='display: flex; gap: 8px; align-items: center;'>
               <button class='btn-refresh' onclick='forceRefreshTask("battery")' title='Force update battery history'>⟳</button>
               <button class='btn' id='btnDownloadBatCsv' style='padding: 6px 12px; font-size: 12px; margin: 0;'>Download CSV</button>
@@ -1168,36 +1168,55 @@ void WebManager::handleRoot() {
       return 60;
     }
 
-    function getSolarTimes(lat, lng, date, offsetHours) {
+    function getSolarEpochs(lat, lng, year, month, day) {
       const radians = Math.PI / 180;
       const degrees = 180 / Math.PI;
 
-      const start = new Date(date.getFullYear(), 0, 0);
-      const diff = date - start;
-      const oneDay = 1000 * 60 * 60 * 24;
-      const day = Math.floor(diff / oneDay);
+      const localMidnight = new Date(year, month, day);
+      const localNextMidnight = new Date(year, month, day + 1);
 
-      const decl = 23.45 * Math.sin(radians * (360 / 365) * (day - 81));
-      const declRad = decl * radians;
+      const startOfYear = new Date(year, 0, 1);
+      const diff = localMidnight - startOfYear;
+      const oneDay = 86400000;
+      const dayOfYear = Math.floor(diff / oneDay) + 1;
+
+      const gamma = (2 * Math.PI / 365) * (dayOfYear - 1);
+
+      const eqTime = 229.18 * (0.000075 + 0.001868 * Math.cos(gamma) - 0.032077 * Math.sin(gamma)
+        - 0.014615 * Math.cos(2 * gamma) - 0.040849 * Math.sin(2 * gamma));
+
+      const decl = 0.006918 - 0.399912 * Math.cos(gamma) + 0.070257 * Math.sin(gamma)
+        - 0.006758 * Math.cos(2 * gamma) + 0.000907 * Math.sin(2 * gamma)
+        - 0.002697 * Math.cos(3 * gamma) + 0.00148 * Math.sin(3 * gamma);
+
       const latRad = lat * radians;
 
-      const cosH = (Math.cos(90.83 * radians) - Math.sin(latRad) * Math.sin(declRad)) / (Math.cos(latRad) * Math.cos(declRad));
-      
-      if (cosH > 1) return { polarNight: true, sunrise: null, sunset: null };
-      if (cosH < -1) return { polarDay: true, sunrise: null, sunset: null };
+      const cosH = (Math.cos(90.833 * radians) - Math.sin(latRad) * Math.sin(decl)) / (Math.cos(latRad) * Math.cos(decl));
 
-      const H = degrees * Math.acos(cosH);
+      if (cosH > 1 || cosH < -1) return null;
 
-      const b = (360 / 365) * (day - 81) * radians;
-      const eqTime = 9.87 * Math.sin(2 * b) - 7.53 * Math.cos(b) - 1.5 * Math.sin(b);
+      const ha = degrees * Math.acos(cosH);
 
-      const solarNoonUT = 12 - (lng / 15) - (eqTime / 60);
-      const localSolarNoon = (solarNoonUT + offsetHours + 24) % 24;
+      const offsetHours = Math.round(lng / 15);
+      const tzMeridian = offsetHours * 15;
+      const solarNoonMinLocal = 720 - (4 * (lng - tzMeridian)) - eqTime;
 
-      const sunriseHours = (localSolarNoon - (H / 15) + 24) % 24;
-      const sunsetHours = (localSolarNoon + (H / 15) + 24) % 24;
+      const sunriseMinLocal = solarNoonMinLocal - (ha * 4);
+      const sunsetMinLocal = solarNoonMinLocal + (ha * 4);
 
-      return { sunrise: sunriseHours, sunset: sunsetHours };
+      const localMidnightSec = localMidnight.getTime() / 1000;
+      const localNextMidnightSec = localNextMidnight.getTime() / 1000;
+
+      const res = {
+        localMidnightEpoch: localMidnightSec,
+        localNextMidnightEpoch: localNextMidnightSec,
+        sunriseEpoch: localMidnightSec + (sunriseMinLocal * 60),
+        sunsetEpoch: localMidnightSec + (sunsetMinLocal * 60)
+      };
+
+      console.log(`[SolarCalc] ${year}-${month+1}-${day} | Sunrise: ${new Date(res.sunriseEpoch * 1000).toLocaleTimeString()} | Sunset: ${new Date(res.sunsetEpoch * 1000).toLocaleTimeString()}`);
+
+      return res;
     }
 
     function percentToVoltage(pct) {
@@ -1819,34 +1838,35 @@ void WebManager::handleRoot() {
       const status = lastPoint.s;
       const tr = lastPoint.tr; // timeRemaining in seconds
 
-      // Generate 24 hours prediction points into the future
+      // Generate prediction points into the future for the FULL predicted duration
       const predPoints = [];
       const step = 600; // 10 minutes interval
       
       if (status === 'Discharging') {
-        let rate = 1000; // fallback default seconds per percent
-        if (tr > 0 && P_now > 0) {
-          rate = tr / P_now;
-        }
-        for (let dt = 0; dt <= 86400; dt += step) {
+        let duration = (tr && tr > 0) ? tr : Math.max(600, P_now * 1000);
+        for (let dt = 0; dt < duration; dt += step) {
           const t = T_now + dt;
-          let p = P_now - (dt / rate);
+          let p = P_now - (P_now * (dt / duration));
           if (p < 0) p = 0;
           const v = percentToVoltage(p);
           predPoints.push({ ts: t, v: v, p: p });
         }
+        // Exact 0% empty end point
+        predPoints.push({ ts: T_now + duration, v: percentToVoltage(0), p: 0 });
       } else if (status === 'Charging / USB') {
-        let chargeTime = tr > 0 ? tr : (100 - P_now) * 180; // default 5 hours if slope is flat/negative
-        for (let dt = 0; dt <= 86400; dt += step) {
+        let duration = (tr && tr > 0) ? tr : Math.max(600, (100 - P_now) * 180);
+        for (let dt = 0; dt < duration; dt += step) {
           const t = T_now + dt;
-          let p = P_now + ((100 - P_now) / chargeTime) * dt;
+          let p = P_now + ((100 - P_now) * (dt / duration));
           if (p > 100) p = 100;
           const v = percentToVoltage(p);
           predPoints.push({ ts: t, v: v, p: p });
         }
+        // Exact 100% full end point
+        predPoints.push({ ts: T_now + duration, v: percentToVoltage(100), p: 100 });
       } else {
-        // Full
-        for (let dt = 0; dt <= 86400; dt += step) {
+        // Full: project flat for 12 hours
+        for (let dt = 0; dt <= 43200; dt += step) {
           predPoints.push({ ts: T_now + dt, v: 4.15, p: 100 });
         }
       }
@@ -1884,7 +1904,6 @@ void WebManager::handleRoot() {
       }
 
       const data = [xData, vHist, pHist, vPred, pPred];
-
       const opts = {
         width: rect.width,
         height: 250,
@@ -1899,6 +1918,7 @@ void WebManager::handleRoot() {
         scales: {
           x: {
             time: true,
+            range: (u, dataMin, dataMax) => [dataMin, dataMax],
           },
           v: {
             auto: false,
@@ -1917,7 +1937,7 @@ void WebManager::handleRoot() {
             label: 'Voltage (Hist)',
             value: (self, rawValue) => rawValue != null ? rawValue.toFixed(3) + ' V' : '--',
             stroke: '#fbbf24', // Yellow
-            width: 2.5,
+            width: 2,
           },
           {
             show: true,
@@ -1925,30 +1945,37 @@ void WebManager::handleRoot() {
             label: 'Capacity (Hist)',
             value: (self, rawValue) => rawValue != null ? Math.round(rawValue) + ' %' : '--',
             stroke: '#a855f7', // Purple
-            width: 2.5,
+            width: 2,
           },
           {
             show: true,
             scale: 'v',
             label: 'Voltage (Pred)',
             value: (self, rawValue) => rawValue != null ? rawValue.toFixed(3) + ' V' : '--',
-            stroke: '#fbbf24',
-            width: 1.5,
-            dash: [4, 4],
+            stroke: '#fbbf24', // Yellow
+            width: 2,
+            dash: [6, 6],
           },
           {
             show: true,
             scale: 'pct',
             label: 'Capacity (Pred)',
             value: (self, rawValue) => rawValue != null ? Math.round(rawValue) + ' %' : '--',
-            stroke: '#a855f7',
-            width: 1.5,
-            dash: [4, 4],
+            stroke: '#a855f7', // Purple
+            width: 2,
+            dash: [6, 6],
           }
         ],
         axes: [
           {
             stroke: "rgba(255, 255, 255, 0.5)",
+            values: (u, splits) => splits.map(ts => {
+              const d = new Date(ts * 1000);
+              const hrs = d.getHours();
+              const ampm = hrs >= 12 ? 'pm' : 'am';
+              const h12 = hrs % 12 || 12;
+              return `${h12}${ampm}\n${d.getMonth()+1}/${d.getDate()}`;
+            }),
             grid: {
               show: true,
               stroke: "rgba(255, 255, 255, 0.05)",
@@ -1993,90 +2020,143 @@ void WebManager::handleRoot() {
           }
         ],
         hooks: {
-          drawClear: [
+          draw: [
             (u) => {
-              const ctx = u.ctx;
-              const xMin = u.scales.x.min;
-              const xMax = u.scales.x.max;
-              const yMin = u.valToPos(u.scales.v.min, 'y');
-              const yMax = u.valToPos(u.scales.v.max, 'y');
-              
-              ctx.save();
-              
-              const lat = parseFloat($('cfgLatitude')?.value || localStorage.getItem('cfgLatitude') || -37.8136);
-              const lng = parseFloat($('cfgLongitude')?.value || localStorage.getItem('cfgLongitude') || 144.9631);
-              const offsetHours = -new Date().getTimezoneOffset() / 60;
-              
-              const minDate = new Date(xMin * 1000);
-              const maxDate = new Date(xMax * 1000);
-              
-              let curDate = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate());
-              curDate.setDate(curDate.getDate() - 1);
-              
-              while (curDate <= maxDate) {
-                const times = getSolarTimes(lat, lng, curDate, offsetHours);
-                if (times && times.sunrise != null && times.sunset != null) {
-                  const dayStart = new Date(curDate.getFullYear(), curDate.getMonth(), curDate.getDate()).getTime() / 1000;
-                  const sunriseEpoch = dayStart + times.sunrise * 3600;
-                  const sunsetEpoch = dayStart + times.sunset * 3600;
-                  const nextDayStart = dayStart + 24 * 3600;
-                  
-                  // Night shade 1: day start to sunrise
-                  const nb1Start = Math.max(xMin, dayStart);
-                  const nb1End = Math.min(xMax, sunriseEpoch);
-                  if (nb1Start < nb1End) {
-                    const pxStart = u.valToPos(nb1Start, 'x');
-                    const pxEnd = u.valToPos(nb1End, 'x');
-                    ctx.fillStyle = 'rgba(15, 23, 42, 0.35)'; // Dark night shading
-                    ctx.fillRect(pxStart, yMax, pxEnd - pxStart, yMin - yMax);
-                  }
-                  
-                  // Night shade 2: sunset to next day start
-                  const nb2Start = Math.max(xMin, sunsetEpoch);
-                  const nb2End = Math.min(xMax, nextDayStart);
-                  if (nb2Start < nb2End) {
-                    const pxStart = u.valToPos(nb2Start, 'x');
-                    const pxEnd = u.valToPos(nb2End, 'x');
-                    ctx.fillStyle = 'rgba(15, 23, 42, 0.35)';
-                    ctx.fillRect(pxStart, yMax, pxEnd - pxStart, yMin - yMax);
-                  }
-                  
-                  // Draw Sunrise/Sunset dotted lines and labels
-                  ctx.lineWidth = 1.0;
-                  ctx.setLineDash([3, 4]);
-                  
-                  if (sunriseEpoch >= xMin && sunriseEpoch <= xMax) {
-                    const px = u.valToPos(sunriseEpoch, 'x');
-                    ctx.strokeStyle = 'rgba(250, 204, 21, 0.35)';
-                    ctx.beginPath();
-                    ctx.moveTo(px, yMax);
-                    ctx.lineTo(px, yMin);
-                    ctx.stroke();
-                    
-                    ctx.fillStyle = 'rgba(250, 204, 21, 0.6)';
-                    ctx.font = '9px var(--font-sans)';
-                    ctx.textAlign = 'center';
-                    ctx.fillText('Sunrise', px, yMax + 12);
-                  }
-                  
-                  if (sunsetEpoch >= xMin && sunsetEpoch <= xMax) {
-                    const px = u.valToPos(sunsetEpoch, 'x');
-                    ctx.strokeStyle = 'rgba(249, 115, 22, 0.35)';
-                    ctx.beginPath();
-                    ctx.moveTo(px, yMax);
-                    ctx.lineTo(px, yMin);
-                    ctx.stroke();
-                    
-                    ctx.fillStyle = 'rgba(249, 115, 22, 0.6)';
-                    ctx.font = '9px var(--font-sans)';
-                    ctx.textAlign = 'center';
-                    ctx.fillText('Sunset', px, yMax + 12);
+              try {
+                const ctx = u.ctx;
+                let xMin = u.scales.x ? u.scales.x.min : null;
+                let xMax = u.scales.x ? u.scales.x.max : null;
+
+                if (xMin == null || xMax == null || isNaN(xMin) || isNaN(xMax)) {
+                  if (data && data[0] && data[0].length > 0) {
+                    xMin = data[0][0];
+                    xMax = data[0][data[0].length - 1];
+                  } else {
+                    return;
                   }
                 }
-                curDate.setDate(curDate.getDate() + 1);
+
+                const yTop = u.bbox.top;
+                const gridHeight = u.bbox.height;
+                const yBottom = yTop + gridHeight;
+
+                if (isNaN(yTop) || isNaN(gridHeight) || gridHeight <= 0) return;
+
+                ctx.save();
+
+                // Mask drawing strictly inside u.bbox chart area (no axis/label overlap on the left)
+                ctx.beginPath();
+                ctx.rect(u.bbox.left, u.bbox.top, u.bbox.width, u.bbox.height);
+                ctx.clip();
+
+                // Get coordinates with NaN safeguards
+                let latVal = $('cfgLatitude')?.value || localStorage.getItem('cfgLatitude');
+                let lat = parseFloat(latVal);
+                if (isNaN(lat)) lat = -37.8136;
+
+                let lngVal = $('cfgLongitude')?.value || localStorage.getItem('cfgLongitude');
+                let lng = parseFloat(lngVal);
+                if (isNaN(lng)) lng = 144.9631;
+
+                const minDate = new Date(xMin * 1000);
+                const maxDate = new Date(xMax * 1000);
+
+                if (isNaN(minDate.getTime()) || isNaN(maxDate.getTime())) {
+                  ctx.restore();
+                  return;
+                }
+
+                // Collect solar events across full timeline range
+                let curDate = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate());
+                curDate.setDate(curDate.getDate() - 2);
+                const endLimit = new Date(maxDate.getFullYear(), maxDate.getMonth(), maxDate.getDate() + 3);
+
+                const solarEvents = [];
+
+                while (curDate <= endLimit) {
+                  const sol = getSolarEpochs(lat, lng, curDate.getFullYear(), curDate.getMonth(), curDate.getDate());
+                  if (sol) {
+                    solarEvents.push(sol);
+                  }
+                  curDate.setDate(curDate.getDate() + 1);
+                }
+
+                console.log(`[SolarDraw] xMin=${xMin} (${new Date(xMin*1000).toLocaleString()}) | xMax=${xMax} (${new Date(xMax*1000).toLocaleString()}) | SolarDays=${solarEvents.length}`);
+
+                // 1. Draw Dark Night Slate Shading Bands
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.40)'; // Dark night tint overlay
+
+                for (let i = 0; i < solarEvents.length; i++) {
+                  const sol = solarEvents[i];
+
+                  // Night Band 1: Local Midnight to Sunrise
+                  const n1Start = Math.max(xMin, sol.localMidnightEpoch);
+                  const n1End = Math.min(xMax, sol.sunriseEpoch);
+                  if (n1Start < n1End) {
+                    const pxStart = u.valToPos(n1Start, 'x');
+                    const pxEnd = u.valToPos(n1End, 'x');
+                    ctx.fillRect(pxStart, yTop, pxEnd - pxStart, gridHeight);
+                  }
+
+                  // Night Band 2: Sunset to Next Local Midnight
+                  const n2Start = Math.max(xMin, sol.sunsetEpoch);
+                  const n2End = Math.min(xMax, sol.localNextMidnightEpoch);
+                  if (n2Start < n2End) {
+                    const pxStart = u.valToPos(n2Start, 'x');
+                    const pxEnd = u.valToPos(n2End, 'x');
+                    ctx.fillRect(pxStart, yTop, pxEnd - pxStart, gridHeight);
+                  }
+                }
+
+                // 2. Draw Dotted Sunrise & Sunset Annotation Lines and Labels on top
+                for (let i = 0; i < solarEvents.length; i++) {
+                  const sol = solarEvents[i];
+
+                  // Sunrise Line & Label
+                  if (sol.sunriseEpoch >= xMin && sol.sunriseEpoch <= xMax) {
+                    const px = u.valToPos(sol.sunriseEpoch, 'x');
+                    ctx.strokeStyle = '#facc15'; // Bright yellow
+                    ctx.lineWidth = 2.0;
+                    ctx.setLineDash([5, 5]);
+                    ctx.beginPath();
+                    ctx.moveTo(px, yTop);
+                    ctx.lineTo(px, yBottom);
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#facc15';
+                    ctx.font = 'bold 12px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = '#000000';
+                    ctx.shadowBlur = 4;
+                    ctx.fillText('☀ Sunrise', px, yTop + 16);
+                    ctx.shadowBlur = 0;
+                  }
+
+                  // Sunset Line & Label
+                  if (sol.sunsetEpoch >= xMin && sol.sunsetEpoch <= xMax) {
+                    const px = u.valToPos(sol.sunsetEpoch, 'x');
+                    ctx.strokeStyle = '#fb923c'; // Bright orange
+                    ctx.lineWidth = 2.0;
+                    ctx.setLineDash([5, 5]);
+                    ctx.beginPath();
+                    ctx.moveTo(px, yTop);
+                    ctx.lineTo(px, yBottom);
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#fb923c';
+                    ctx.font = 'bold 12px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = '#000000';
+                    ctx.shadowBlur = 4;
+                    ctx.fillText('🌙 Sunset', px, yTop + 16);
+                    ctx.shadowBlur = 0;
+                  }
+                }
+
+                ctx.restore();
+              } catch (e) {
+                console.error('Solar overlay render error:', e);
               }
-              
-              ctx.restore();
             }
           ]
         }
@@ -2923,6 +3003,7 @@ void WebManager::handleRoot() {
 </html>
 )HTML";
 
+  server_.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server_.send_P(200, "text/html", html, sizeof(html) - 1);
 }
 
