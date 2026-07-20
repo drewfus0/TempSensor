@@ -8,7 +8,7 @@
 #include "managers/LoggerManager.h"
 #include "managers/TimeManager.h"
 #include "managers/DisplayManager.h"
-#include "web/uplot_assets.h"
+
 
 namespace {
 class FastLineReader {
@@ -99,8 +99,7 @@ void WebManager::loop() {
 
 void WebManager::registerRoutes() {
   server_.on("/", [this]() { logRequest(); handleRoot(); });
-  server_.on("/sys/uplot.js", HTTP_GET, [this]() { logRequest(); handleLocalUPlotJs(); });
-  server_.on("/sys/uplot.css", HTTP_GET, [this]() { logRequest(); handleLocalUPlotCss(); });
+
   server_.on("/api/live", [this]() { logRequest(); handleLiveJson(); });
   server_.on("/api/health", [this]() { logRequest(); handleHealthJson(); });
   server_.on("/api/config", HTTP_GET, [this]() { logRequest(); handleConfigGet(); });
@@ -135,8 +134,9 @@ void WebManager::handleRoot() {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/sys/uplot.css">
-  <script src="/sys/uplot.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/dygraph/2.1.0/dygraph.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dygraph/2.1.0/dygraph.min.js"></script>
+
   <style>
     :root {
       --bg: #090d16;
@@ -459,56 +459,92 @@ void WebManager::handleRoot() {
       border: 1px solid rgba(239, 68, 68, 0.25);
       color: var(--error);
     }
-    
+
     .chart-container {
       position: relative;
       width: 100%;
-      height: 500px;
+      height: 320px;
       margin-top: 12px;
       border-radius: 6px;
-      background: rgba(0, 0, 0, 0.2);
+      background: rgba(0, 0, 0, 0.25);
       overflow: hidden;
+      border: 1px solid var(--card-border);
+      padding: 10px;
     }
-    .uplot {
-      position: relative;
-      font-family: var(--font-main);
-      width: 100% !important;
-      height: 100% !important;
-    }
-    .u-legend {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      z-index: 10;
-      padding: 6px 12px !important;
-      font-size: 0.72rem !important;
-      color: var(--text-sub) !important;
-      background: rgba(21, 27, 43, 0.85) !important;
-      border: 1px solid rgba(255, 255, 255, 0.08) !important;
-      border-radius: 6px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-    .u-legend.u-inline tr {
-      margin-left: 15px;
-      margin-right: 0;
-    }
-    .u-legend .u-label {
-      color: var(--text-sub) !important;
-      font-weight: 600;
-    }
-    .u-legend .u-value {
-      font-family: var(--font-mono);
-      font-weight: 600;
-      color: var(--text) !important;
-    }
-    .u-tooltip {
-      background: rgba(9, 13, 22, 0.95) !important;
+    .dygraph-legend {
+      background-color: rgba(21, 27, 43, 0.9) !important;
       border: 1px solid var(--card-border) !important;
-      border-radius: 6px !important;
       color: var(--text) !important;
       font-family: var(--font-main) !important;
-      font-size: 0.72rem !important;
+      font-size: 12px !important;
+      border-radius: 4px;
+      padding: 6px !important;
     }
+    .dygraph-axis-label {
+      color: var(--text-sub) !important;
+      font-family: var(--font-main) !important;
+      font-size: 11px !important;
+    }
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(5, 8, 15, 0.85);
+      backdrop-filter: blur(8px);
+      z-index: 1000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    .modal-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .modal-content {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 30px;
+      width: 90%;
+      max-width: 450px;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+    }
+    .modal-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .modal-subtitle {
+      font-size: 0.88rem;
+      color: var(--text-sub);
+      margin-bottom: 20px;
+    }
+    .modal-progress-container {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 999px;
+      height: 8px;
+      width: 100%;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .modal-progress-bar {
+      background: var(--accent);
+      height: 100%;
+      width: 0%;
+      transition: width 0.1s ease;
+    }
+    .modal-percent {
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+      font-weight: 500;
+    }
+
     
     .scroll-area {
       margin: 0;
@@ -806,6 +842,7 @@ void WebManager::handleRoot() {
     </div>
   </div>
 
+
   <div class='header-container'>
     <div class='wrap'>
       <div class='head'>
@@ -954,24 +991,6 @@ void WebManager::handleRoot() {
                 <option value='custom'>Custom</option>
               </select>
             </div>
-            <div class='form-group'>
-              <label for='binSize'>Bin Size <span id='binSizeMeta' style='font-size: 11px; color: var(--text-sub); margin-left: 4px;'></span></label>
-              <select id='binSize'>
-                <option value='auto' selected>Auto</option>
-                <option value='10'>10s</option>
-                <option value='30'>30s</option>
-                <option value='60'>1m</option>
-                <option value='300'>5m</option>
-                <option value='600'>10m</option>
-                <option value='1800'>30m</option>
-                <option value='3600'>1h</option>
-                <option value='custom'>Custom</option>
-              </select>
-            </div>
-            <div class='form-group' id='customBinGroup' style='display: none;'>
-              <label for='customBinVal'>Seconds</label>
-              <input id='customBinVal' type='number' min='1' max='86400' value='60' style='width: 100%;'>
-            </div>
           </div>
           
           <div class='controls-grid' id='customRangeGroup' style='grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; display: none;'>
@@ -992,15 +1011,26 @@ void WebManager::handleRoot() {
           
           <div class='alert-banner' id='historyAlert' style='margin-bottom: 10px;'></div>
 
-          <div class='chart-container' id='chart-parent'>
-            <div id='chart'></div>
+          <div class='chart-container'>
+            <div id='chart' style='width: 100%; height: 100%;'></div>
+          </div>
+          <div style='display: flex; gap: 16px; margin-top: 10px; justify-content: center; font-size: 14px;'>
+            <label style='display: flex; align-items: center; gap: 6px; cursor: pointer; color: #f43f5e;'>
+              <input type='checkbox' id='chkTemp' checked onchange='updateVisibility()'> Temperature (°C)
+            </label>
+            <label style='display: flex; align-items: center; gap: 6px; cursor: pointer; color: #06b6d4;'>
+              <input type='checkbox' id='chkHum' checked onchange='updateVisibility()'> Humidity (%)
+            </label>
+            <label style='display: flex; align-items: center; gap: 6px; cursor: pointer; color: #10b981;'>
+              <input type='checkbox' id='chkPres' onchange='updateVisibility()'> Pressure (hPa)
+            </label>
           </div>
           <div class='live-meta' id='historyMeta' style='margin-top: 12px; text-align: left;'>
             No history data loaded.
           </div>
         </section>
 
-        <section class='card' style='margin-top: 20px;'>
+        <section class='card'>
           <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>
             <h2 style='margin: 0;'>Battery History & Prediction</h2>
             <div style='display: flex; gap: 8px; align-items: center;'>
@@ -1008,8 +1038,8 @@ void WebManager::handleRoot() {
               <button class='btn' id='btnDownloadBatCsv' style='padding: 6px 12px; font-size: 12px; margin: 0;'>Download CSV</button>
             </div>
           </div>
-          <div class='chart-container' id='batChartParent' style='height: 250px;'>
-            <div id='batChart'></div>
+          <div class='chart-container' style='height: 250px;'>
+            <div id='batChart' style='width: 100%; height: 100%;'></div>
           </div>
           <div class='live-meta' id='batChartMeta' style='margin-top: 12px; text-align: left;'>
             No battery history loaded.
@@ -1139,11 +1169,16 @@ void WebManager::handleRoot() {
   </div> <!-- End wrap -->
 
   <script>
+    let dygraphInstance = null;
+    let batDygraphInstance = null;
+    let historyDataset = [];
+    let loadedBatteryData = [];
+    let historyLoaded = false;
+    let isLoadingHistory = false;
+
     const $ = (id) => document.getElementById(id);
     
-    let uplotInstance = null;
-    let batChartInstance = null;
-    let loadedBatteryData = [];
+
     let tasks = [];
     let schedulerTimer = null;
     let isFetching = false;
@@ -1168,70 +1203,7 @@ void WebManager::handleRoot() {
       return 60;
     }
 
-    function getSolarEpochs(lat, lng, year, month, day) {
-      const radians = Math.PI / 180;
-      const degrees = 180 / Math.PI;
 
-      const localMidnight = new Date(year, month, day);
-      const localNextMidnight = new Date(year, month, day + 1);
-
-      const startOfYear = new Date(year, 0, 1);
-      const diff = localMidnight - startOfYear;
-      const oneDay = 86400000;
-      const dayOfYear = Math.floor(diff / oneDay) + 1;
-
-      const gamma = (2 * Math.PI / 365) * (dayOfYear - 1);
-
-      const eqTime = 229.18 * (0.000075 + 0.001868 * Math.cos(gamma) - 0.032077 * Math.sin(gamma)
-        - 0.014615 * Math.cos(2 * gamma) - 0.040849 * Math.sin(2 * gamma));
-
-      const decl = 0.006918 - 0.399912 * Math.cos(gamma) + 0.070257 * Math.sin(gamma)
-        - 0.006758 * Math.cos(2 * gamma) + 0.000907 * Math.sin(2 * gamma)
-        - 0.002697 * Math.cos(3 * gamma) + 0.00148 * Math.sin(3 * gamma);
-
-      const latRad = lat * radians;
-
-      const cosH = (Math.cos(90.833 * radians) - Math.sin(latRad) * Math.sin(decl)) / (Math.cos(latRad) * Math.cos(decl));
-
-      if (cosH > 1 || cosH < -1) return null;
-
-      const ha = degrees * Math.acos(cosH);
-
-      const offsetHours = Math.round(lng / 15);
-      const tzMeridian = offsetHours * 15;
-      const solarNoonMinLocal = 720 - (4 * (lng - tzMeridian)) - eqTime;
-
-      const sunriseMinLocal = solarNoonMinLocal - (ha * 4);
-      const sunsetMinLocal = solarNoonMinLocal + (ha * 4);
-
-      const localMidnightSec = localMidnight.getTime() / 1000;
-      const localNextMidnightSec = localNextMidnight.getTime() / 1000;
-
-      const res = {
-        localMidnightEpoch: localMidnightSec,
-        localNextMidnightEpoch: localNextMidnightSec,
-        sunriseEpoch: localMidnightSec + (sunriseMinLocal * 60),
-        sunsetEpoch: localMidnightSec + (sunsetMinLocal * 60)
-      };
-
-      console.log(`[SolarCalc] ${year}-${month+1}-${day} | Sunrise: ${new Date(res.sunriseEpoch * 1000).toLocaleTimeString()} | Sunset: ${new Date(res.sunsetEpoch * 1000).toLocaleTimeString()}`);
-
-      return res;
-    }
-
-    function percentToVoltage(pct) {
-      if (pct >= 100) return 4.15;
-      if (pct <= 0) return 3.40;
-      if (pct >= 80) {
-        return 4.00 + (pct - 80) / 20 * 0.15;
-      } else if (pct >= 50) {
-        return 3.82 + (pct - 50) / 30 * 0.18;
-      } else if (pct >= 15) {
-        return 3.70 + (pct - 15) / 35 * 0.12;
-      } else {
-        return 3.40 + (pct - 0) / 15 * 0.30;
-      }
-    }
 
     function updateCountdowns() {
       const now = Date.now();
@@ -1258,7 +1230,6 @@ void WebManager::handleRoot() {
     }
 
     setInterval(updateCountdowns, 1000);
-
     function loadUiIntervals() {
       $('uiIntervalLive').value = localStorage.getItem('uiIntervalLive') || 10;
       $('uiIntervalHealth').value = localStorage.getItem('uiIntervalHealth') || 20;
@@ -1394,8 +1365,7 @@ void WebManager::handleRoot() {
       }
     }
 
-    let historyLoaded = false;
-    let historyDataset = [];
+
     let lastLive = null;
     let lastHealth = null;
 
@@ -1447,1026 +1417,9 @@ void WebManager::handleRoot() {
       $('pillRef').textContent = stampNow();
     }
 
-    function formatAvgMinMax(self, val, seriesIdx, dataIdx, suffix, decimals) {
-      if (val == null) return '--';
-      const idx = dataIdx !== null ? dataIdx : self.data[0].length - 1;
-      const avgVal = self.data[seriesIdx][idx];
-      const minVal = self.data[seriesIdx - 2][idx];
-      const maxVal = self.data[seriesIdx - 1][idx];
-      return `Avg: ${avgVal != null ? avgVal.toFixed(decimals) : '--'}${suffix} | Min: ${minVal != null ? minVal.toFixed(decimals) : '--'}${suffix} | Max: ${maxVal != null ? maxVal.toFixed(decimals) : '--'}${suffix}`;
-    }
 
-    function aggregateData(dataset, binSizeSeconds) {
-      if (!dataset || dataset.length === 0) return [];
 
-      const parsed = [];
-      for (let i = 0; i < dataset.length; i++) {
-        const pt = dataset[i];
-        const epochSec = Date.parse(pt.ts.replace(' ', 'T')) / 1000;
-        if (!isNaN(epochSec)) {
-          parsed.push({
-            ts: epochSec,
-            temp: parseFloat(pt.temp),
-            hum: parseFloat(pt.hum),
-            pres: parseFloat(pt.pres)
-          });
-        }
-      }
 
-      if (parsed.length === 0) return [];
-      parsed.sort((a, b) => a.ts - b.ts);
-
-      const startTs = parsed[0].ts;
-      const endTs = parsed[parsed.length - 1].ts;
-      
-      const bins = [];
-      let currentBinStart = startTs;
-      let currentBinData = [];
-
-      for (let i = 0; i < parsed.length; i++) {
-        const pt = parsed[i];
-        while (pt.ts >= currentBinStart + binSizeSeconds) {
-          if (currentBinData.length > 0) {
-            bins.push({
-              ts: currentBinStart + binSizeSeconds / 2, // middle of the bin
-              data: currentBinData
-            });
-            currentBinData = [];
-          }
-          currentBinStart += binSizeSeconds;
-        }
-        currentBinData.push(pt);
-      }
-
-      if (currentBinData.length > 0) {
-        bins.push({
-          ts: currentBinStart + binSizeSeconds / 2,
-          data: currentBinData
-        });
-      }
-
-      const result = [];
-      for (let i = 0; i < bins.length; i++) {
-        const bin = bins[i];
-        const d = bin.data;
-        let tSum = 0, hSum = 0, pSum = 0;
-        let tMin = d[0].temp, tMax = d[0].temp;
-        let hMin = d[0].hum, hMax = d[0].hum;
-        let pMin = d[0].pres, pMax = d[0].pres;
-
-        for (let j = 0; j < d.length; j++) {
-          const val = d[j];
-          tSum += val.temp;
-          hSum += val.hum;
-          pSum += val.pres;
-
-          if (val.temp < tMin) tMin = val.temp;
-          if (val.temp > tMax) tMax = val.temp;
-          if (val.hum < hMin) hMin = val.hum;
-          if (val.hum > hMax) hMax = val.hum;
-          if (val.pres < pMin) pMin = val.pres;
-          if (val.pres > pMax) pMax = val.pres;
-        }
-
-        result.push({
-          ts: bin.ts,
-          temp: { min: tMin, max: tMax, avg: tSum / d.length },
-          hum: { min: hMin, max: hMax, avg: hSum / d.length },
-          pres: { min: pMin, max: pMax, avg: pSum / d.length }
-        });
-      }
-
-      return result;
-    }
-
-    function renderChart() {
-      const container = $('chart-parent');
-      const target = $('chart');
-      const rect = container.getBoundingClientRect();
-
-      if (uplotInstance) {
-        uplotInstance.destroy();
-        uplotInstance = null;
-      }
-
-      if (!historyDataset || historyDataset.length === 0) {
-        target.innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 500px; font-size: 13px;">${historyLoaded ? 'No history data in this range.' : 'Select a range and load history to display chart.'}</div>`;
-        return;
-      }
-
-      // 1. Calculate bin size
-      let binSizeSeconds = 10;
-      const binSel = $('binSize').value;
-      if (binSel === 'auto') {
-        const range = $('range').value;
-        if (range === '15m') binSizeSeconds = 10;
-        else if (range === '1h') binSizeSeconds = 30;
-        else if (range === '6h') binSizeSeconds = 180;
-        else if (range === '24h') binSizeSeconds = 600;
-        else if (range === 'custom') {
-          const startVal = $('start').value;
-          const endVal = $('end').value;
-          if (startVal && endVal) {
-            const diffMs = new Date(endVal) - new Date(startVal);
-            binSizeSeconds = Math.max(10, Math.floor(diffMs / (150 * 1000)));
-          }
-        }
-        
-        let autoStr = binSizeSeconds + 's';
-        if (binSizeSeconds >= 3600) {
-          autoStr = (binSizeSeconds / 3600).toFixed(1) + 'h';
-        } else if (binSizeSeconds >= 60) {
-          autoStr = (binSizeSeconds / 60).toFixed(1) + 'm';
-        }
-        $('binSizeMeta').textContent = `(Auto: ${autoStr})`;
-      } else if (binSel === 'custom') {
-        const customVal = parseInt($('customBinVal').value);
-        binSizeSeconds = !isNaN(customVal) && customVal > 0 ? customVal : 60;
-        $('binSizeMeta').textContent = '(Custom)';
-      } else {
-        binSizeSeconds = parseInt(binSel);
-        $('binSizeMeta').textContent = '';
-      }
-
-      // 2. Perform aggregation
-      const aggregated = aggregateData(historyDataset, binSizeSeconds);
-
-      if (aggregated.length === 0) {
-        target.innerHTML = '<div style="color: var(--text-sub); text-align: center; line-height: 500px; font-size: 13px;">No parseable history data.</div>';
-        return;
-      }
-
-      const xData = [];
-      const tempMin = [];
-      const tempMax = [];
-      const tempAvg = [];
-      const humMin = [];
-      const humMax = [];
-      const humAvg = [];
-      const presMin = [];
-      const presMax = [];
-      const presAvg = [];
-
-      for (let i = 0; i < aggregated.length; i++) {
-        const pt = aggregated[i];
-        xData.push(pt.ts);
-        tempMin.push(pt.temp.min);
-        tempMax.push(pt.temp.max);
-        tempAvg.push(pt.temp.avg);
-        humMin.push(pt.hum.min);
-        humMax.push(pt.hum.max);
-        humAvg.push(pt.hum.avg);
-        presMin.push(pt.pres.min);
-        presMax.push(pt.pres.max);
-        presAvg.push(pt.pres.avg);
-      }
-
-      const data = [
-        xData,
-        tempMin, tempMax, tempAvg,
-        humMin, humMax, humAvg,
-        presMin, presMax, presAvg
-      ];
-
-      const opts = {
-        width: rect.width,
-        height: 500,
-        title: "",
-        class: "uplot-theme",
-        cursor: {
-          show: true
-        },
-        select: {
-          show: true,
-          over: true,
-        },
-        scales: {
-          x: {
-            time: true,
-          },
-          temp: {
-            auto: true,
-          },
-          humidity: {
-            auto: true,
-            range: [0, 100],
-          },
-          pressure: {
-            auto: true,
-          }
-        },
-        series: [
-          {}, // x-axis
-          // Temperature
-          {
-            show: true,
-            scale: 'temp',
-            stroke: 'rgba(244, 63, 94, 0.5)',
-            width: 1,
-            points: { show: false },
-            label: 'Temp Min',
-            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' °C' : '--',
-          },
-          {
-            show: true,
-            scale: 'temp',
-            stroke: 'rgba(244, 63, 94, 0.5)',
-            width: 1,
-            points: { show: false },
-            label: 'Temp Max',
-            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' °C' : '--',
-          },
-          {
-            show: true,
-            scale: 'temp',
-            label: 'Temperature (Min/Max/Avg)',
-            value: (self, val, sIdx, dIdx) => formatAvgMinMax(self, val, sIdx, dIdx, '°C', 2),
-            stroke: '#f43f5e',
-            width: 2,
-          },
-          // Humidity
-          {
-            show: true,
-            scale: 'humidity',
-            stroke: 'rgba(6, 182, 212, 0.5)',
-            width: 1,
-            points: { show: false },
-            label: 'Hum Min',
-            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' %' : '--',
-          },
-          {
-            show: true,
-            scale: 'humidity',
-            stroke: 'rgba(6, 182, 212, 0.5)',
-            width: 1,
-            points: { show: false },
-            label: 'Hum Max',
-            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' %' : '--',
-          },
-          {
-            show: true,
-            scale: 'humidity',
-            label: 'Humidity (Min/Max/Avg)',
-            value: (self, val, sIdx, dIdx) => formatAvgMinMax(self, val, sIdx, dIdx, '%', 2),
-            stroke: '#06b6d4',
-            width: 2,
-          },
-          // Pressure
-          {
-            show: true,
-            scale: 'pressure',
-            stroke: 'rgba(16, 185, 129, 0.5)',
-            width: 1,
-            points: { show: false },
-            label: 'Pres Min',
-            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(1) + ' hPa' : '--',
-          },
-          {
-            show: true,
-            scale: 'pressure',
-            stroke: 'rgba(16, 185, 129, 0.5)',
-            width: 1,
-            points: { show: false },
-            label: 'Pres Max',
-            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(1) + ' hPa' : '--',
-          },
-          {
-            show: true,
-            scale: 'pressure',
-            label: 'Pressure (Min/Max/Avg)',
-            value: (self, val, sIdx, dIdx) => formatAvgMinMax(self, val, sIdx, dIdx, 'hPa', 1),
-            stroke: '#10b981',
-            width: 2,
-          }
-        ],
-        bands: [
-          {
-            series: [2, 1],
-            fill: 'rgba(244, 63, 94, 0.15)'
-          },
-          {
-            series: [5, 4],
-            fill: 'rgba(6, 182, 212, 0.15)'
-          },
-          {
-            series: [8, 7],
-            fill: 'rgba(16, 185, 129, 0.15)'
-          }
-        ],
-        axes: [
-          {
-            stroke: "rgba(255, 255, 255, 0.5)",
-            grid: {
-              show: true,
-              stroke: "rgba(255, 255, 255, 0.05)",
-              width: 1,
-            },
-            ticks: {
-              show: true,
-              stroke: "rgba(255, 255, 255, 0.1)",
-              width: 1,
-            },
-            space: 60,
-          },
-          {
-            scale: 'temp',
-            side: 3,
-            stroke: "rgba(255, 255, 255, 0.5)",
-            grid: {
-              show: true,
-              stroke: "rgba(255, 255, 255, 0.05)",
-              width: 1,
-            },
-            ticks: {
-              show: true,
-              stroke: "rgba(255, 255, 255, 0.1)",
-              width: 1,
-            },
-            space: 30,
-          },
-          {
-            scale: 'humidity',
-            side: 1,
-            stroke: "rgba(255, 255, 255, 0.5)",
-            grid: {
-              show: false,
-            },
-            ticks: {
-              show: true,
-              stroke: "rgba(255, 255, 255, 0.1)",
-              width: 1,
-            },
-            space: 30,
-          }
-        ]
-      };
-
-      target.innerHTML = '';
-      uplotInstance = new uPlot(opts, data, target);
-
-      // Hide Min and Max series from the default legend DOM
-      const legendRows = target.querySelectorAll('.u-legend tr');
-      legendRows.forEach((row, idx) => {
-        if (idx === 0 || idx === 1 || idx === 3 || idx === 4 || idx === 6 || idx === 7) {
-          row.style.display = 'none';
-        }
-      });
-    }
-
-    function renderBatteryChart(dataset) {
-      const container = $('batChartParent');
-      const target = $('batChart');
-      const rect = container.getBoundingClientRect();
-
-      if (batChartInstance) {
-        batChartInstance.destroy();
-        batChartInstance = null;
-      }
-
-      if (!dataset || dataset.length === 0) {
-        target.innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 250px; font-size: 13px;">No battery history data.</div>`;
-        return;
-      }
-
-      // Sort dataset first to ensure chronological order (especially for circular log downloads)
-      dataset.sort((a, b) => a.ts - b.ts);
-
-      const lastPoint = dataset[dataset.length - 1];
-      const T_now = lastPoint.ts;
-      const V_now = lastPoint.v;
-      const P_now = lastPoint.p;
-      const status = lastPoint.s;
-      const tr = lastPoint.tr; // timeRemaining in seconds
-
-      // Generate prediction points into the future for the FULL predicted duration
-      const predPoints = [];
-      const step = 600; // 10 minutes interval
-      
-      if (status === 'Discharging') {
-        let duration = (tr && tr > 0) ? tr : Math.max(600, P_now * 1000);
-        for (let dt = 0; dt < duration; dt += step) {
-          const t = T_now + dt;
-          let p = P_now - (P_now * (dt / duration));
-          if (p < 0) p = 0;
-          const v = percentToVoltage(p);
-          predPoints.push({ ts: t, v: v, p: p });
-        }
-        // Exact 0% empty end point
-        predPoints.push({ ts: T_now + duration, v: percentToVoltage(0), p: 0 });
-      } else if (status === 'Charging / USB') {
-        let duration = (tr && tr > 0) ? tr : Math.max(600, (100 - P_now) * 180);
-        for (let dt = 0; dt < duration; dt += step) {
-          const t = T_now + dt;
-          let p = P_now + ((100 - P_now) * (dt / duration));
-          if (p > 100) p = 100;
-          const v = percentToVoltage(p);
-          predPoints.push({ ts: t, v: v, p: p });
-        }
-        // Exact 100% full end point
-        predPoints.push({ ts: T_now + duration, v: percentToVoltage(100), p: 100 });
-      } else {
-        // Full: project flat for 12 hours
-        for (let dt = 0; dt <= 43200; dt += step) {
-          predPoints.push({ ts: T_now + dt, v: 4.15, p: 100 });
-        }
-      }
-
-      // Arrays for uPlot (Combined timeline)
-      const xData = [];
-      const vHist = [];
-      const pHist = [];
-      const vPred = [];
-      const pPred = [];
-
-      // Add historical data
-      for (let i = 0; i < dataset.length; i++) {
-        const pt = dataset[i];
-        xData.push(pt.ts);
-        vHist.push(pt.v);
-        pHist.push(pt.p);
-        vPred.push(null);
-        pPred.push(null);
-      }
-
-      // Connect historical line to prediction line smoothly
-      const lastIdx = dataset.length - 1;
-      vPred[lastIdx] = dataset[lastIdx].v;
-      pPred[lastIdx] = dataset[lastIdx].p;
-
-      // Add prediction data
-      for (let i = 1; i < predPoints.length; i++) {
-        const pt = predPoints[i];
-        xData.push(pt.ts);
-        vHist.push(null);
-        pHist.push(null);
-        vPred.push(pt.v);
-        pPred.push(pt.p);
-      }
-
-      const data = [xData, vHist, pHist, vPred, pPred];
-      const opts = {
-        width: rect.width,
-        height: 250,
-        title: "",
-        class: "uplot-theme",
-        cursor: {
-          show: true
-        },
-        select: {
-          show: false
-        },
-        scales: {
-          x: {
-            time: true,
-            range: (u, dataMin, dataMax) => [dataMin, dataMax],
-          },
-          v: {
-            auto: false,
-            range: [3.0, 4.3],
-          },
-          pct: {
-            auto: false,
-            range: [0, 100],
-          }
-        },
-        series: [
-          {},
-          {
-            show: true,
-            scale: 'v',
-            label: 'Voltage (Hist)',
-            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(3) + ' V' : '--',
-            stroke: '#fbbf24', // Yellow
-            width: 2,
-          },
-          {
-            show: true,
-            scale: 'pct',
-            label: 'Capacity (Hist)',
-            value: (self, rawValue) => rawValue != null ? Math.round(rawValue) + ' %' : '--',
-            stroke: '#a855f7', // Purple
-            width: 2,
-          },
-          {
-            show: true,
-            scale: 'v',
-            label: 'Voltage (Pred)',
-            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(3) + ' V' : '--',
-            stroke: '#fbbf24', // Yellow
-            width: 2,
-            dash: [6, 6],
-          },
-          {
-            show: true,
-            scale: 'pct',
-            label: 'Capacity (Pred)',
-            value: (self, rawValue) => rawValue != null ? Math.round(rawValue) + ' %' : '--',
-            stroke: '#a855f7', // Purple
-            width: 2,
-            dash: [6, 6],
-          }
-        ],
-        axes: [
-          {
-            stroke: "rgba(255, 255, 255, 0.5)",
-            values: (u, splits) => splits.map(ts => {
-              const d = new Date(ts * 1000);
-              const hrs = d.getHours();
-              const ampm = hrs >= 12 ? 'pm' : 'am';
-              const h12 = hrs % 12 || 12;
-              return `${h12}${ampm}\n${d.getMonth()+1}/${d.getDate()}`;
-            }),
-            grid: {
-              show: true,
-              stroke: "rgba(255, 255, 255, 0.05)",
-              width: 1,
-            },
-            ticks: {
-              show: true,
-              stroke: "rgba(255, 255, 255, 0.1)",
-              width: 1,
-            },
-            space: 60,
-          },
-          {
-            scale: 'v',
-            side: 3,
-            stroke: "#fbbf24",
-            grid: {
-              show: true,
-              stroke: "rgba(255, 255, 255, 0.05)",
-              width: 1,
-            },
-            ticks: {
-              show: true,
-              stroke: "rgba(255, 255, 255, 0.1)",
-              width: 1,
-            },
-            space: 30,
-          },
-          {
-            scale: 'pct',
-            side: 1,
-            stroke: "#a855f7",
-            grid: {
-              show: false,
-            },
-            ticks: {
-              show: true,
-              stroke: "rgba(255, 255, 255, 0.1)",
-              width: 1,
-            },
-            space: 30,
-          }
-        ],
-        hooks: {
-          draw: [
-            (u) => {
-              try {
-                const ctx = u.ctx;
-                let xMin = u.scales.x ? u.scales.x.min : null;
-                let xMax = u.scales.x ? u.scales.x.max : null;
-
-                if (xMin == null || xMax == null || isNaN(xMin) || isNaN(xMax)) {
-                  if (data && data[0] && data[0].length > 0) {
-                    xMin = data[0][0];
-                    xMax = data[0][data[0].length - 1];
-                  } else {
-                    return;
-                  }
-                }
-
-                const yTop = u.bbox.top;
-                const gridHeight = u.bbox.height;
-                const yBottom = yTop + gridHeight;
-
-                if (isNaN(yTop) || isNaN(gridHeight) || gridHeight <= 0) return;
-
-                ctx.save();
-
-                // Mask drawing strictly inside u.bbox chart area (no axis/label overlap on the left)
-                ctx.beginPath();
-                ctx.rect(u.bbox.left, u.bbox.top, u.bbox.width, u.bbox.height);
-                ctx.clip();
-
-                // Get coordinates with NaN safeguards
-                let latVal = $('cfgLatitude')?.value || localStorage.getItem('cfgLatitude');
-                let lat = parseFloat(latVal);
-                if (isNaN(lat)) lat = -37.8136;
-
-                let lngVal = $('cfgLongitude')?.value || localStorage.getItem('cfgLongitude');
-                let lng = parseFloat(lngVal);
-                if (isNaN(lng)) lng = 144.9631;
-
-                const minDate = new Date(xMin * 1000);
-                const maxDate = new Date(xMax * 1000);
-
-                if (isNaN(minDate.getTime()) || isNaN(maxDate.getTime())) {
-                  ctx.restore();
-                  return;
-                }
-
-                // Collect solar events across full timeline range
-                let curDate = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate());
-                curDate.setDate(curDate.getDate() - 2);
-                const endLimit = new Date(maxDate.getFullYear(), maxDate.getMonth(), maxDate.getDate() + 3);
-
-                const solarEvents = [];
-
-                while (curDate <= endLimit) {
-                  const sol = getSolarEpochs(lat, lng, curDate.getFullYear(), curDate.getMonth(), curDate.getDate());
-                  if (sol) {
-                    solarEvents.push(sol);
-                  }
-                  curDate.setDate(curDate.getDate() + 1);
-                }
-
-                console.log(`[SolarDraw] xMin=${xMin} (${new Date(xMin*1000).toLocaleString()}) | xMax=${xMax} (${new Date(xMax*1000).toLocaleString()}) | SolarDays=${solarEvents.length}`);
-
-                // 1. Draw Dark Night Slate Shading Bands
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.40)'; // Dark night tint overlay
-
-                for (let i = 0; i < solarEvents.length; i++) {
-                  const sol = solarEvents[i];
-
-                  // Night Band 1: Local Midnight to Sunrise
-                  const n1Start = Math.max(xMin, sol.localMidnightEpoch);
-                  const n1End = Math.min(xMax, sol.sunriseEpoch);
-                  if (n1Start < n1End) {
-                    const pxStart = u.valToPos(n1Start, 'x');
-                    const pxEnd = u.valToPos(n1End, 'x');
-                    ctx.fillRect(pxStart, yTop, pxEnd - pxStart, gridHeight);
-                  }
-
-                  // Night Band 2: Sunset to Next Local Midnight
-                  const n2Start = Math.max(xMin, sol.sunsetEpoch);
-                  const n2End = Math.min(xMax, sol.localNextMidnightEpoch);
-                  if (n2Start < n2End) {
-                    const pxStart = u.valToPos(n2Start, 'x');
-                    const pxEnd = u.valToPos(n2End, 'x');
-                    ctx.fillRect(pxStart, yTop, pxEnd - pxStart, gridHeight);
-                  }
-                }
-
-                // 2. Draw Dotted Sunrise & Sunset Annotation Lines and Labels on top
-                for (let i = 0; i < solarEvents.length; i++) {
-                  const sol = solarEvents[i];
-
-                  // Sunrise Line & Label
-                  if (sol.sunriseEpoch >= xMin && sol.sunriseEpoch <= xMax) {
-                    const px = u.valToPos(sol.sunriseEpoch, 'x');
-                    ctx.strokeStyle = '#facc15'; // Bright yellow
-                    ctx.lineWidth = 2.0;
-                    ctx.setLineDash([5, 5]);
-                    ctx.beginPath();
-                    ctx.moveTo(px, yTop);
-                    ctx.lineTo(px, yBottom);
-                    ctx.stroke();
-
-                    ctx.fillStyle = '#facc15';
-                    ctx.font = 'bold 12px sans-serif';
-                    ctx.textAlign = 'center';
-                    ctx.shadowColor = '#000000';
-                    ctx.shadowBlur = 4;
-                    ctx.fillText('☀ Sunrise', px, yTop + 16);
-                    ctx.shadowBlur = 0;
-                  }
-
-                  // Sunset Line & Label
-                  if (sol.sunsetEpoch >= xMin && sol.sunsetEpoch <= xMax) {
-                    const px = u.valToPos(sol.sunsetEpoch, 'x');
-                    ctx.strokeStyle = '#fb923c'; // Bright orange
-                    ctx.lineWidth = 2.0;
-                    ctx.setLineDash([5, 5]);
-                    ctx.beginPath();
-                    ctx.moveTo(px, yTop);
-                    ctx.lineTo(px, yBottom);
-                    ctx.stroke();
-
-                    ctx.fillStyle = '#fb923c';
-                    ctx.font = 'bold 12px sans-serif';
-                    ctx.textAlign = 'center';
-                    ctx.shadowColor = '#000000';
-                    ctx.shadowBlur = 4;
-                    ctx.fillText('🌙 Sunset', px, yTop + 16);
-                    ctx.shadowBlur = 0;
-                  }
-                }
-
-                ctx.restore();
-              } catch (e) {
-                console.error('Solar overlay render error:', e);
-              }
-            }
-          ]
-        }
-      };
-
-      target.innerHTML = '';
-      batChartInstance = new uPlot(opts, data, target);
-    }
-
-    async function loadBatteryHistory() {
-      try {
-        // Load all records in the log file (up to 2 days capped by backend pruning)
-        
-        const response = await fetch('/api/logs/download?file=/logs/battery.bin');
-        if (!response.ok) {
-          if (response.status === 404) {
-            setText('batChartMeta', 'No battery log file found yet (waiting for first 60s sample).');
-            renderBatteryChart([]);
-            loadedBatteryData = [];
-            return;
-          }
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        if (arrayBuffer.byteLength === 0) {
-          setText('batChartMeta', 'No battery data file found or file empty.');
-          renderBatteryChart([]);
-          loadedBatteryData = [];
-          return;
-        }
-
-        const recordSize = 14;
-        const view = new DataView(arrayBuffer);
-        const numRecords = Math.floor(arrayBuffer.byteLength / recordSize);
-        const dataset = [];
-
-        for (let i = 0; i < numRecords; i++) {
-          const offset = i * recordSize;
-          const epochTime = view.getUint32(offset, true);
-          if (epochTime === 0) continue;
-          const voltage = view.getFloat32(offset + 4, true);
-          const percent = view.getUint8(offset + 8);
-          const chargingState = view.getUint8(offset + 9);
-          const timeRemaining = view.getInt32(offset + 10, true);
-
-          let status = 'Unknown';
-          if (chargingState === 1) status = 'Discharging';
-          else if (chargingState === 2) status = 'Charging / USB';
-          else if (chargingState === 3) status = 'Full';
-
-          let tsStr = '';
-          if (epochTime < 1000000) {
-            tsStr = `uptime+${epochTime}s`;
-          } else {
-            const d = new Date(epochTime * 1000);
-            const pad = (n) => String(n).padStart(2, '0');
-            tsStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-          }
-
-          dataset.push({ ts: epochTime, tsStr: tsStr, v: voltage, p: percent, s: status, tr: timeRemaining });
-        }
-
-        dataset.sort((a, b) => a.ts - b.ts);
-        loadedBatteryData = dataset;
-        renderBatteryChart(dataset);
-
-        if (dataset.length > 0) {
-          const lastPoint = dataset[dataset.length - 1];
-          let metaText = `Loaded ${dataset.length} points. Latest: ${lastPoint.v.toFixed(3)}V (${lastPoint.p}%) - ${lastPoint.s}`;
-          if (lastPoint.tr && lastPoint.tr > 0) {
-            const hours = Math.floor(lastPoint.tr / 3600);
-            const mins = Math.floor((lastPoint.tr % 3600) / 60);
-            if (lastPoint.s === 'Charging / USB') {
-              metaText += ` (${hours}h ${mins}m to full)`;
-            } else {
-              metaText += ` (${hours}h ${mins}m remaining)`;
-            }
-          }
-          setText('batChartMeta', metaText);
-        } else {
-          setText('batChartMeta', 'No battery records found in the log file.');
-        }
-        lastBatteryFetchTime = Date.now();
-      } catch (err) {
-        console.error("Battery history load error", err);
-        setText('batChartMeta', 'Failed to load battery history: ' + err.message);
-        renderBatteryChart([]);
-        loadedBatteryData = [];
-      }
-    }
-
-    window.addEventListener('resize', () => {
-      if (uplotInstance) {
-        const container = $('chart-parent');
-        const rect = container.getBoundingClientRect();
-        uplotInstance.setSize({ width: rect.width, height: 500 });
-      }
-      if (batChartInstance) {
-        const container = $('batChartParent');
-        const rect = container.getBoundingClientRect();
-        batChartInstance.setSize({ width: rect.width, height: 250 });
-      }
-    });
-
-    function validateDateRange(startStr, endStr) {
-      if (!startStr || !endStr) return "Both start and end date-times are required.";
-      const s = new Date(startStr);
-      const e = new Date(endStr);
-      if (isNaN(s.getTime()) || isNaN(e.getTime())) return "Invalid date format.";
-      if (e < s) return "End date-time must be greater than or equal to start date-time.";
-      const diffMs = e - s;
-      const maxMs = 7 * 24 * 60 * 60 * 1000;
-      if (diffMs > maxMs) return "Requested date range exceeds the maximum allowed range of 7 days.";
-      return null;
-    }
-
-    let isLoadingHistory = false;
-
-    function updateModalProgress(percent, status) {
-      $('modalProgressBar').style.width = percent + '%';
-      $('modalProgressPercent').textContent = Math.round(percent) + '%';
-      if (status) {
-        $('modalStatus').textContent = status;
-      }
-    }
-
-    async function loadHistory() {
-      const alert = $('historyAlert');
-      alert.style.display = 'none';
-      
-      if ($('range').value === 'custom') {
-        const err = validateDateRange($('start').value, $('end').value);
-        if (err) {
-          alert.textContent = err;
-          alert.className = 'alert-banner error';
-          alert.style.display = 'block';
-          return;
-        }
-      }
-
-      isLoadingHistory = true;
-      const modal = $('progressModal');
-      modal.classList.add('active');
-      updateModalProgress(0, 'Initializing data request...');
-
-      let startDate = null;
-      let endDate = null;
-      const range = $('range').value;
-      const now = new Date();
-      if (range === 'custom') {
-        const s = $('start').value;
-        const e = $('end').value;
-        if (s) startDate = new Date(s.replace('T', ' ') + ':00');
-        if (e) endDate = new Date(e.replace('T', ' ') + ':00');
-      } else {
-        const mins = {
-          '15m': 15,
-          '1h': 60,
-          '6h': 360,
-          '24h': 1440
-        }[range] || 60;
-        startDate = new Date(now.getTime() - mins * 60000);
-        endDate = now;
-      }
-
-      if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-        alert.textContent = "Invalid date range selected.";
-        alert.className = 'alert-banner error';
-        alert.style.display = 'block';
-        modal.classList.remove('active');
-        isLoadingHistory = false;
-        return;
-      }
-
-      const chunkMs = 1 * 3600 * 1000; // 1 hour in milliseconds (smaller chunk to prevent gaps in data logging)
-      const totalMs = endDate.getTime() - startDate.getTime();
-      const numChunks = Math.ceil(totalMs / chunkMs);
-      
-      let allPoints = [];
-
-      try {
-        setText('historyMeta', 'Initializing chunked download...');
-        
-        for (let i = 0; i < numChunks; i++) {
-          const chunkStart = new Date(startDate.getTime() + i * chunkMs);
-          const chunkEnd = new Date(Math.min(startDate.getTime() + (i + 1) * chunkMs - 1000, endDate.getTime()));
-          
-          const startStr = fmtLocalTs(chunkStart);
-          const endStr = fmtLocalTs(chunkEnd);
-          
-          updateModalProgress(
-            (i / numChunks) * 80 + 10,
-            `Downloading chunk ${i + 1}/${numChunks} (${Math.round((i / numChunks) * 100)}%)...`
-          );
-          
-          const url = '/api/history?start=' + encodeURIComponent(startStr) + '&end=' + encodeURIComponent(endStr);
-          const res = await fetch(url, { cache: 'no-store' });
-          if (!res.ok) {
-            throw new Error(`HTTP status ${res.status} on chunk ${i + 1}`);
-          }
-          
-          const startTimestampStr = res.headers.get('X-Start-Timestamp') || startStr;
-          const intervalMs = parseInt(res.headers.get('X-Sample-Interval-Ms') || '1000');
-          const recordSize = parseInt(res.headers.get('X-Record-Size') || '17');
-
-          const arrayBuffer = await res.arrayBuffer();
-          const view = new DataView(arrayBuffer);
-          const totalRecords = arrayBuffer.byteLength / recordSize;
-          const baseTime = new Date(startTimestampStr.replace(' ', 'T')).getTime();
-          
-          for (let r = 0; r < totalRecords; r++) {
-            const offset = r * recordSize;
-            
-            const uptime = view.getUint32(offset + 0, true);
-            const temp = view.getFloat32(offset + 4, true);
-            const hum = view.getFloat32(offset + 8, true);
-            const pres = view.getFloat32(offset + 12, true);
-            const quality = view.getUint8(offset + 16);
-
-            if (quality === 2) {
-              continue; // Empty/unwritten slot
-            }
-
-            const recTime = new Date(baseTime + r * intervalMs);
-            const recTs = fmtLocalTs(recTime);
-
-            allPoints.push({
-              ts: recTs,
-              q: quality === 0 ? 'ntp' : 'estimated',
-              temp: temp,
-              hum: hum,
-              pres: pres,
-              uptime: uptime
-            });
-          }
-          
-          // Yield to give ESP8266 CPU time for background tasks
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
-
-        updateModalProgress(90, 'Preparing chart dataset...');
-
-        historyLoaded = true;
-        historyDataset = allPoints;
-        renderChart();
-
-        setText('historyMeta',
-          'Total Logged: ' + allPoints.length +
-          ' | Rendered: ' + historyDataset.length);
-
-        updateModalProgress(100, 'Done!');
-        await new Promise(resolve => setTimeout(resolve, 250));
-      } catch (err) {
-        historyDataset = [];
-        historyLoaded = true;
-        renderChart();
-        setText('historyMeta', 'History error: ' + err.message);
-        alert.textContent = 'History load failed: ' + err.message;
-        alert.className = 'alert-banner error';
-        alert.style.display = 'block';
-      } finally {
-        modal.classList.remove('active');
-        setTimeout(() => {
-          isLoadingHistory = false;
-        }, 100);
-      }
-    }
-
-    function downloadFilteredCSV() {
-      if (!historyDataset || historyDataset.length === 0) {
-        alert("No history data loaded to download. Click Load Graph Data first.");
-        return;
-      }
-      
-      let csv = 'timestamp,timestamp_quality,temp_c,humidity_pct,pressure_hpa,uptime_s\n';
-      for (const p of historyDataset) {
-        csv += p.ts + ',' + p.q + ',' + p.temp.toFixed(2) + ',' + p.hum.toFixed(2) + ',' + p.pres.toFixed(2) + ',' + p.uptime + '\n';
-      }
-      
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', 'filtered_log.csv');
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
-
-    function downloadBatteryCSV() {
-      if (!loadedBatteryData || loadedBatteryData.length === 0) {
-        alert("No battery records loaded yet.");
-        return;
-      }
-      let csvContent = "timestamp,voltage,percent,status,time_remaining_s\n";
-      for (const pt of loadedBatteryData) {
-        csvContent += pt.tsStr + "," + pt.v.toFixed(3) + "," + pt.p + "," + pt.s + "," + pt.tr + "\n";
-      }
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement("a");
-      const url = URL.createObjectURL(blob);
-      link.setAttribute("href", url);
-      link.setAttribute("download", "battery.csv");
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
 
     async function loadSdTree() {
       if (isLoadingHistory) return;
@@ -2830,18 +1783,6 @@ void WebManager::handleRoot() {
     $('btnDownloadBatCsv').addEventListener('click', downloadBatteryCSV);
     $('btnSaveUiIntervals').addEventListener('click', saveUiIntervals);
     $('range').addEventListener('change', onRangeChanged);
-    $('binSize').addEventListener('change', () => {
-      const isCustom = $('binSize').value === 'custom';
-      $('customBinGroup').style.display = isCustom ? 'block' : 'none';
-      if (historyLoaded && historyDataset.length > 0) {
-        renderChart();
-      }
-    });
-    $('customBinVal').addEventListener('input', () => {
-      if (historyLoaded && historyDataset.length > 0) {
-        renderChart();
-      }
-    });
 
     // OTA File Upload Handler
     const otaFile = $('otaFile');
@@ -2984,6 +1925,346 @@ void WebManager::handleRoot() {
       xhr.send(formData);
     });
 
+    function updateModalProgress(percent, status) {
+      $('modalProgressBar').style.width = percent + '%';
+      $('modalProgressPercent').textContent = Math.round(percent) + '%';
+      if (status) {
+        $('modalStatus').textContent = status;
+      }
+    }
+
+    async function loadHistory() {
+      const alert = $('historyAlert');
+      alert.style.display = 'none';
+
+      isLoadingHistory = true;
+      const modal = $('progressModal');
+      modal.classList.add('active');
+      updateModalProgress(0, 'Initializing data request...');
+
+      let startDate = null;
+      let endDate = null;
+      const range = $('range').value;
+      const now = new Date();
+      if (range === 'custom') {
+        const s = $('start').value;
+        const e = $('end').value;
+        if (s) startDate = new Date(s.replace('T', ' ') + ':00');
+        if (e) endDate = new Date(e.replace('T', ' ') + ':00');
+      } else {
+        const mins = {
+          '15m': 15,
+          '1h': 60,
+          '6h': 360,
+          '24h': 1440
+        }[range] || 60;
+        startDate = new Date(now.getTime() - mins * 60000);
+        endDate = now;
+      }
+
+      if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        alert.textContent = "Invalid date range selected.";
+        alert.className = 'alert-banner error';
+        alert.style.display = 'block';
+        modal.classList.remove('active');
+        isLoadingHistory = false;
+        return;
+      }
+
+      const chunkMs = 1 * 3600 * 1000;
+      const totalMs = endDate.getTime() - startDate.getTime();
+      const numChunks = Math.ceil(totalMs / chunkMs);
+      
+      let allPoints = [];
+
+      try {
+        setText('historyMeta', 'Initializing chunked download...');
+        
+        for (let i = 0; i < numChunks; i++) {
+          const chunkStart = new Date(startDate.getTime() + i * chunkMs);
+          const chunkEnd = new Date(Math.min(startDate.getTime() + (i + 1) * chunkMs - 1000, endDate.getTime()));
+          
+          const startStr = fmtLocalTs(chunkStart);
+          const endStr = fmtLocalTs(chunkEnd);
+          
+          updateModalProgress(
+            (i / numChunks) * 80 + 10,
+            `Downloading chunk ${i + 1}/${numChunks} (${Math.round((i / numChunks) * 100)}%)...`
+          );
+          
+          const url = '/api/history?start=' + encodeURIComponent(startStr) + '&end=' + encodeURIComponent(endStr);
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) {
+            throw new Error(`HTTP status ${res.status} on chunk ${i + 1}`);
+          }
+          
+          const startTimestampStr = res.headers.get('X-Start-Timestamp') || startStr;
+          const intervalMs = parseInt(res.headers.get('X-Sample-Interval-Ms') || '1000');
+          const recordSize = parseInt(res.headers.get('X-Record-Size') || '17');
+
+          const arrayBuffer = await res.arrayBuffer();
+          const view = new DataView(arrayBuffer);
+          const totalRecords = arrayBuffer.byteLength / recordSize;
+          const baseTime = new Date(startTimestampStr.replace(' ', 'T')).getTime();
+          
+          for (let r = 0; r < totalRecords; r++) {
+            const offset = r * recordSize;
+            const uptime = view.getUint32(offset + 0, true);
+            const temp = view.getFloat32(offset + 4, true);
+            const hum = view.getFloat32(offset + 8, true);
+            const pres = view.getFloat32(offset + 12, true);
+            const quality = view.getUint8(offset + 16);
+
+            if (quality === 2) {
+              continue;
+            }
+
+            const recTime = new Date(baseTime + r * intervalMs);
+
+            allPoints.push([
+              recTime,
+              temp,
+              hum,
+              pres
+            ]);
+          }
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+
+        updateModalProgress(90, 'Preparing chart dataset...');
+
+        historyLoaded = true;
+        historyDataset = allPoints;
+
+        if (dygraphInstance) {
+          dygraphInstance.destroy();
+        }
+
+        if (allPoints.length > 0) {
+          dygraphInstance = new Dygraph(
+            document.getElementById("chart"),
+            allPoints,
+            {
+              labels: [ "Time", "Temperature", "Humidity", "Pressure" ],
+              colors: [ "#f43f5e", "#06b6d4", "#10b981" ],
+              strokeWidth: 2,
+              gridLineColor: "rgba(255, 255, 255, 0.05)",
+              axisLineColor: "rgba(255, 255, 255, 0.1)",
+              visibility: [
+                $('chkTemp').checked,
+                $('chkHum').checked,
+                $('chkPres').checked
+              ],
+              series: {
+                "Temperature": {
+                  axis: 'y'
+                },
+                "Humidity": {
+                  axis: 'y2'
+                },
+                "Pressure": {
+                  axis: 'y2'
+                }
+              },
+              axes: {
+                y: {
+                  axisLabelColor: '#f43f5e',
+                  valueRange: [null, null]
+                },
+                y2: {
+                  axisLabelColor: '#06b6d4',
+                  valueRange: [null, null]
+                }
+              }
+            }
+          );
+          setText('historyMeta', 'Total Logged: ' + allPoints.length);
+        } else {
+          document.getElementById("chart").innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 300px;">No data in this range.</div>`;
+          setText('historyMeta', 'No data loaded.');
+        }
+
+        updateModalProgress(100, 'Done!');
+        await new Promise(resolve => setTimeout(resolve, 250));
+      } catch (err) {
+        historyDataset = [];
+        historyLoaded = true;
+        setText('historyMeta', 'History error: ' + err.message);
+        alert.textContent = 'History load failed: ' + err.message;
+        alert.className = 'alert-banner error';
+        alert.style.display = 'block';
+      } finally {
+        modal.classList.remove('active');
+        setTimeout(() => {
+          isLoadingHistory = false;
+        }, 100);
+      }
+    }
+
+    function updateVisibility() {
+      if (dygraphInstance) {
+        dygraphInstance.setVisibility([
+          $('chkTemp').checked,
+          $('chkHum').checked,
+          $('chkPres').checked
+        ]);
+      }
+    }
+
+    async function loadBatteryHistory() {
+      try {
+        const response = await fetch('/api/logs/download?file=/logs/battery.bin');
+        if (!response.ok) {
+          if (response.status === 404) {
+            setText('batChartMeta', 'No battery log file found yet (waiting for first 60s sample).');
+            return;
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength === 0) {
+          setText('batChartMeta', 'No battery data file found or file empty.');
+          return;
+        }
+
+        const recordSize = 14;
+        const view = new DataView(arrayBuffer);
+        const numRecords = Math.floor(arrayBuffer.byteLength / recordSize);
+        const dataset = [];
+
+        for (let i = 0; i < numRecords; i++) {
+          const offset = i * recordSize;
+          const epochTime = view.getUint32(offset, true);
+          if (epochTime === 0) continue;
+          const voltage = view.getFloat32(offset + 4, true);
+          const percent = view.getUint8(offset + 8);
+          const chargingState = view.getUint8(offset + 9);
+          const timeRemaining = view.getInt32(offset + 10, true);
+
+          let status = 'Unknown';
+          if (chargingState === 1) status = 'Discharging';
+          else if (chargingState === 2) status = 'Charging / USB';
+          else if (chargingState === 3) status = 'Full';
+
+          dataset.push({ ts: epochTime, v: voltage, p: percent, s: status, tr: timeRemaining });
+        }
+
+        dataset.sort((a, b) => a.ts - b.ts);
+        loadedBatteryData = dataset;
+
+        const batPoints = dataset.map(pt => [
+          new Date(pt.ts * 1000),
+          pt.v,
+          pt.p
+        ]);
+
+        if (batDygraphInstance) {
+          batDygraphInstance.destroy();
+        }
+
+        if (batPoints.length > 0) {
+          batDygraphInstance = new Dygraph(
+            document.getElementById("batChart"),
+            batPoints,
+            {
+              labels: [ "Time", "Voltage", "Capacity" ],
+              colors: [ "#fbbf24", "#a855f7" ],
+              strokeWidth: 2,
+              gridLineColor: "rgba(255, 255, 255, 0.05)",
+              axisLineColor: "rgba(255, 255, 255, 0.1)",
+              series: {
+                "Capacity": {
+                  axis: 'y2'
+                }
+              },
+              axes: {
+                y: {
+                  valueRange: [3.0, 4.3]
+                },
+                y2: {
+                  valueRange: [0, 100]
+                }
+              }
+            }
+          );
+          
+          const lastPoint = dataset[dataset.length - 1];
+          let metaText = `Loaded ${dataset.length} points. Latest: ${lastPoint.v.toFixed(3)}V (${lastPoint.p}%) - ${lastPoint.s}`;
+          setText('batChartMeta', metaText);
+        } else {
+          document.getElementById("batChart").innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 250px;">No battery history data.</div>`;
+          setText('batChartMeta', 'No battery data.');
+        }
+      } catch (err) {
+        console.error("Battery history load error", err);
+        setText('batChartMeta', 'Failed to load battery history: ' + err.message);
+      }
+    }
+
+    function downloadFilteredCSV() {
+      if (!historyDataset || historyDataset.length === 0) {
+        alert("No history data loaded to download. Click Load Graph Data first.");
+        return;
+      }
+      
+      let csv = 'timestamp,temp_c,humidity_pct,pressure_hpa\n';
+      for (const p of historyDataset) {
+        const d = p[0];
+        const pad = (n) => String(n).padStart(2, '0');
+        const tsStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        csv += tsStr + ',' + p[1].toFixed(2) + ',' + p[2].toFixed(2) + ',' + p[3].toFixed(2) + '\n';
+      }
+      
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', 'filtered_log.csv');
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function downloadBatteryCSV() {
+      if (!loadedBatteryData || loadedBatteryData.length === 0) {
+        alert("No battery records loaded yet.");
+        return;
+      }
+      let csvContent = "timestamp,voltage,percent,status,time_remaining_s\n";
+      for (const pt of loadedBatteryData) {
+        const d = new Date(pt.ts * 1000);
+        const pad = (n) => String(n).padStart(2, '0');
+        const tsStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        csvContent += tsStr + "," + pt.v.toFixed(3) + "," + pt.p + "," + pt.s + "," + pt.tr + "\n";
+      }
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", "battery.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function onRangeChanged() {
+      const custom = $('range').value === 'custom';
+      $('customRangeGroup').style.display = custom ? 'grid' : 'none';
+      if (custom) {
+        const now = new Date();
+        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+        if (!$('start').value) {
+          $('start').value = new Date(oneHourAgo.getTime() - oneHourAgo.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        }
+        if (!$('end').value) {
+          $('end').value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        }
+      }
+    }
+
     window.addEventListener('load', async () => {
       onRangeChanged();
       await loadConfig();
@@ -2992,7 +2273,6 @@ void WebManager::handleRoot() {
       await loadHealth();
       await loadEvents();
       await loadBatteryHistory();
-      renderChart();
 
       initTasks();
       loadUiIntervals();
@@ -3007,21 +2287,7 @@ void WebManager::handleRoot() {
   server_.send_P(200, "text/html", html, sizeof(html) - 1);
 }
 
-void WebManager::handleLocalUPlotJs() {
-  server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server_.sendHeader("Content-Encoding", "gzip");
-  server_.sendHeader("Cache-Control", "public, max-age=86400");
-  server_.send(200, "application/javascript", "");
-  server_.sendContent_P((const char*)UPLOT_JS_GZ, UPLOT_JS_GZ_LEN);
-}
 
-void WebManager::handleLocalUPlotCss() {
-  server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server_.sendHeader("Content-Encoding", "gzip");
-  server_.sendHeader("Cache-Control", "public, max-age=86400");
-  server_.send(200, "text/css", "");
-  server_.sendContent_P((const char*)UPLOT_CSS_GZ, UPLOT_CSS_GZ_LEN);
-}
 
 void WebManager::handleLiveJson() {
   StaticJsonDocument<384> doc;
