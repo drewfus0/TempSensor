@@ -368,6 +368,7 @@ bool LoggerManager::attemptRecovery() {
 
   if (begin(sdCsPin_, sckPin_, misoPin_, mosiPin_)) {
     Serial.println("[Logger] SD card recovered and mounted!");
+    sdJustRecovered_ = true;
     // Flush pending queue immediately on recovery
     flush();
     return true;

@@ -127,6 +127,31 @@ void AppCoordinator::loop() {
 
   handleSampling(nowMs);
   loggerManager_.flushIfDue(nowMs, config_.logFlushIntervalMs);
+
+  // Handle runtime SD card recovery: auto-reload configuration from SD and apply to active managers
+  if (loggerManager_.checkAndClearSdJustRecovered()) {
+    Serial.println("[Config] SD card recovered at runtime! Attempting to load /config.json...");
+    if (loggerManager_.loadDeviceConfig(config_)) {
+      batteryManager_.setBatteryRateBaseline(config_.batteryRateBaseline);
+      timeManager_.setTimezone(config_.timezone);
+      Serial.printf("[Config] Restored saved settings from SD card! Baseline: %.1fs/%%, Timezone: %s\n",
+                    config_.batteryRateBaseline, config_.timezone);
+
+      char ts[32]{};
+      TimestampQuality quality = TimestampQuality::Estimated;
+      timeManager_.getTimestamp(ts, sizeof(ts), quality);
+      loggerManager_.logEvent("sd_card_recovered (Restored config.json from SD)", ts, quality);
+    } else {
+      Serial.println("[Config] /config.json missing on recovered SD card. Writing active defaults...");
+      loggerManager_.saveDeviceConfig(config_);
+
+      char ts[32]{};
+      TimestampQuality quality = TimestampQuality::Estimated;
+      timeManager_.getTimestamp(ts, sizeof(ts), quality);
+      loggerManager_.logEvent("sd_card_recovered (Created default config.json on SD)", ts, quality);
+    }
+  }
+
   handleDisplayRefresh(nowMs);
   handleDiagnostics(nowMs);
   refreshHealth(nowMs);
@@ -145,13 +170,13 @@ void AppCoordinator::loop() {
       loggerManager_.saveDeviceConfig(config_);
       Serial.printf("[Config] Evaluated discharge run baseline saved to SD: %.1fs/%%\n", newRate);
 
-      // Log event to /logs/events.csv showing Prev -> New calibration values
+      // Log descriptive event to /logs/events.csv showing Prev -> New calibration values and full runtime
       char ts[32]{};
       TimestampQuality quality = TimestampQuality::Estimated;
       timeManager_.getTimestamp(ts, sizeof(ts), quality);
 
-      char eventBuf[64]{};
-      snprintf(eventBuf, sizeof(eventBuf), "battery_rate_calibrated (%.0fs -> %.0fs)", prevRate, newRate);
+      char eventBuf[128]{};
+      snprintf(eventBuf, sizeof(eventBuf), "battery_rate_calibrated (%.0fs/1%% -> %.0fs/1%%, %.1fh full runtime)", prevRate, newRate, newRate / 36.0f);
       loggerManager_.logEvent(eventBuf, ts, quality);
     }
   }
