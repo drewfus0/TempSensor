@@ -20,6 +20,11 @@ void BatteryManager::begin() {
   lastPercentChangeMs_ = millis();
   smoothedSecondsPerPercent_ = 1000.0f; // Default for new battery (approx. 27.8 hours total runtime, matching ~31h profile)
   lastStatus_ = "Unknown";
+  validDischargeStartMs_ = 0;
+  validDischargeStartPercent_ = -1;
+  stateConfirmCount_ = 0;
+  lastVoltage_ = voltage_;
+  baselineChanged_ = false;
 
   // Initialize history buffer
   voltageHistory_[0] = voltage_;
@@ -126,104 +131,121 @@ float BatteryManager::calculateSlope() const {
 }
 
 void BatteryManager::updateStatusAndPredictions(uint32_t nowMs) {
-  // Determine charging vs discharging using slope (once we have at least 3 minutes of history)
-  // Under low battery (voltage < 4.0V), require a stronger slope (5mV/min) to ignore raw ADC noise fluctuations
-  bool isSlopeCharging = (historyCount_ >= 3 && (slope_ >= (voltage_ < 4.0f ? 0.005f : 0.0006f)));
-  bool isSlopeDischarging = (historyCount_ >= 3 && slope_ <= -0.0002f);
+  // 1. Calculate instant voltage jump/drop
+  float deltaV = (lastVoltage_ > 0.0f) ? (voltage_ - lastVoltage_) : 0.0f;
+  lastVoltage_ = voltage_;
 
-  if (isSlopeCharging) {
-    if (percent_ >= 99 && voltage_ >= 4.12f) {
-      status_ = "Full";
-    } else {
-      status_ = "Charging / USB";
-    }
-    timeRemainingS_ = -1; // Charging / external power has infinite remaining time
-    
-    // Reset baseline tracking while charging
-    lastRecordedPercent_ = percent_;
-    lastPercentChangeMs_ = nowMs;
-  } else if (isSlopeDischarging) {
-    status_ = "Discharging";
+  const char* nextStatus = status_;
+
+  // 2. Instant state transitions on high-rate charge/discharge events (plug/unplug)
+  if (deltaV >= 0.030f) {
+    nextStatus = "Charging / USB";
+    stateConfirmCount_ = 0;
+  } else if (deltaV <= -0.030f) {
+    nextStatus = "Discharging";
+    stateConfirmCount_ = 0;
   } else {
-    // Fallback: If slope is near zero (or we lack history), use absolute voltage heuristics
-    if (voltage_ >= 4.15f) {
-      if (percent_ >= 99) {
-        status_ = "Full";
+    // 3. Debounced transitions using regression slope (requires 3 minutes of history)
+    if (historyCount_ >= 3) {
+      if (slope_ >= 0.0015f) { // Charging (>1.5mV/min)
+        if (strcmp(status_, "Discharging") == 0 || strcmp(status_, "Unknown") == 0) {
+          stateConfirmCount_++;
+          if (stateConfirmCount_ >= 3) {
+            nextStatus = "Charging / USB";
+            stateConfirmCount_ = 0;
+          }
+        } else {
+          stateConfirmCount_ = 0;
+        }
+      } else if (slope_ <= -0.0010f) { // Discharging (<-1.0mV/min)
+        if (strcmp(status_, "Charging / USB") == 0 || strcmp(status_, "Full") == 0 || strcmp(status_, "Unknown") == 0) {
+          stateConfirmCount_++;
+          if (stateConfirmCount_ >= 3) {
+            nextStatus = "Discharging";
+            stateConfirmCount_ = 0;
+          }
+        } else {
+          stateConfirmCount_ = 0;
+        }
       } else {
-        status_ = "Charging / USB";
-      }
-      timeRemainingS_ = -1;
-      
-      // Reset baseline tracking
-      lastRecordedPercent_ = percent_;
-      lastPercentChangeMs_ = nowMs;
-    } else {
-      // Hysteresis: keep charging status if we were already charging and voltage is still high
-      if (strcmp(lastStatus_, "Charging / USB") == 0 && voltage_ >= 4.05f) {
-        status_ = "Charging / USB";
-        timeRemainingS_ = -1;
-        
-        lastRecordedPercent_ = percent_;
-        lastPercentChangeMs_ = nowMs;
-      } else {
-        status_ = "Discharging";
+        // Flat slope: slowly decay confirmation count to reduce hysteresis lag
+        if (stateConfirmCount_ > 0) stateConfirmCount_--;
       }
     }
   }
 
-  // Update dynamic rate and predictions if discharging
+  // 4. Absolute voltage-level state overrides
+  if (strcmp(nextStatus, "Charging / USB") == 0) {
+    if (percent_ >= 99 && voltage_ >= 4.12f) {
+      nextStatus = "Full";
+    }
+  } else if (strcmp(nextStatus, "Full") == 0) {
+    if (percent_ < 95 && voltage_ < 4.05f) {
+      nextStatus = "Discharging";
+    }
+  } else if (strcmp(nextStatus, "Unknown") == 0) {
+    nextStatus = "Discharging"; // Default boot fallback
+  }
+
+  status_ = nextStatus;
+
+  // 5. Update predictions and evaluate rate on completed discharge window
   if (strcmp(status_, "Discharging") == 0) {
-    // Reset baseline tracking if we just transitioned to discharging
-    if (strcmp(lastStatus_, "Discharging") != 0) {
-      lastRecordedPercent_ = percent_;
-      lastPercentChangeMs_ = nowMs;
-    } 
-    // If the percentage dropped, update the dynamic rate
-    else if (percent_ < lastRecordedPercent_) {
-      uint32_t elapsedMs = nowMs - lastPercentChangeMs_;
-      int drop = lastRecordedPercent_ - percent_;
-
-      if (elapsedMs > 0 && drop > 0) {
-        float secondsPerPercent = (elapsedMs / 1000.0f) / drop;
-
-        // Bound rate to sanity-check ranges (100 seconds to 3600 seconds per 1%)
-        // representing realistic 2.7 to 100 hours of discharge time
-        if (secondsPerPercent >= 100.0f && secondsPerPercent <= 3600.0f) {
-          // EMA filter: 80% weight to historical smoothed rate, 20% to new observation
-          smoothedSecondsPerPercent_ = (smoothedSecondsPerPercent_ * 0.8f) + (secondsPerPercent * 0.2f);
-        }
+    // Only mark the start of the valid discharge window once battery drops to <= 90%
+    // (ignores top 90-100% region where charger re-engagements and surface charge occur)
+    if (percent_ <= 90) {
+      if (validDischargeStartMs_ == 0) {
+        validDischargeStartMs_ = nowMs;
+        validDischargeStartPercent_ = percent_;
       }
-
-      lastRecordedPercent_ = percent_;
-      lastPercentChangeMs_ = nowMs;
-    }
-    // If the percentage rose (due to noise/voltage recovery), reset baseline
-    else if (percent_ > lastRecordedPercent_) {
-      lastRecordedPercent_ = percent_;
-      lastPercentChangeMs_ = nowMs;
     }
 
-    // Dynamic estimation: remaining capacity (%) * smoothed seconds per 1%
+    // Display predictions using the rock-solid saved baseline rate
     timeRemainingS_ = static_cast<int32_t>(percent_ * smoothedSecondsPerPercent_);
   }
-  else if (strcmp(status_, "Charging / USB") == 0) {
-    if (slope_ > 0.0001f) {
+  else if (strcmp(status_, "Charging / USB") == 0 || strcmp(status_, "Full") == 0) {
+    // When transitioning from Discharging to Charging/Full, evaluate the completed discharge run
+    if (validDischargeStartMs_ > 0 && validDischargeStartPercent_ > 0) {
+      uint32_t elapsedS = (nowMs - validDischargeStartMs_) / 1000;
+      int drop = validDischargeStartPercent_ - percent_;
+
+      // Require at least a 10% drop and 1 hour of data to consider the discharge run valid
+      if (drop >= 10 && elapsedS >= 3600) {
+        float runRate = static_cast<float>(elapsedS) / drop;
+
+        // Clamp to realistic bounds (22 to 41 hours total runtime)
+        if (runRate < 800.0f) runRate = 800.0f;
+        if (runRate > 1500.0f) runRate = 1500.0f;
+
+        // Blend 70% historical baseline + 30% new evaluated run rate
+        smoothedSecondsPerPercent_ = (smoothedSecondsPerPercent_ * 0.7f) + (runRate * 0.3f);
+        baselineChanged_ = true;
+
+        Serial.printf("[Battery] Validated discharge run: %d%% drop over %u s. New Baseline Rate: %.1f s/%%\n",
+                      drop, elapsedS, smoothedSecondsPerPercent_);
+      }
+
+      // Reset tracking window
+      validDischargeStartMs_ = 0;
+      validDischargeStartPercent_ = -1;
+    }
+
+    if (strcmp(status_, "Full") == 0) {
+      timeRemainingS_ = 0;
+    } else if (slope_ > 0.0001f) {
       float remainingVolts = 4.15f - voltage_;
       if (remainingVolts <= 0.0f) {
         timeRemainingS_ = 0;
       } else {
         float minutesToFull = remainingVolts / slope_;
         timeRemainingS_ = static_cast<int32_t>(minutesToFull * 60.0f);
-        if (timeRemainingS_ > 86400) { // Limit to max 24 hours
+        if (timeRemainingS_ > 86400) {
           timeRemainingS_ = -1;
         }
       }
     } else {
-      timeRemainingS_ = -1; // Not enough slope history or slope too flat
+      timeRemainingS_ = -1;
     }
-  }
-  else if (strcmp(status_, "Full") == 0) {
-    timeRemainingS_ = 0;
   }
 
   lastStatus_ = status_;

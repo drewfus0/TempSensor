@@ -730,6 +730,9 @@ bool LoggerManager::saveDeviceConfig(const DeviceConfig& config) {
   doc["sample_interval_ms"] = config.sampleIntervalMs;
   doc["log_flush_interval_ms"] = config.logFlushIntervalMs;
   doc["display_refresh_interval_ms"] = config.displayRefreshIntervalMs;
+  doc["latitude"] = config.latitude;
+  doc["longitude"] = config.longitude;
+  doc["battery_rate_baseline"] = config.batteryRateBaseline;
 
   size_t bytes = serializeJson(doc, file);
   file.close();
@@ -766,6 +769,9 @@ bool LoggerManager::loadDeviceConfig(DeviceConfig& config) {
   if (doc.containsKey("sample_interval_ms")) config.sampleIntervalMs = doc["sample_interval_ms"];
   if (doc.containsKey("log_flush_interval_ms")) config.logFlushIntervalMs = doc["log_flush_interval_ms"];
   if (doc.containsKey("display_refresh_interval_ms")) config.displayRefreshIntervalMs = doc["display_refresh_interval_ms"];
+  if (doc.containsKey("latitude")) config.latitude = doc["latitude"];
+  if (doc.containsKey("longitude")) config.longitude = doc["longitude"];
+  if (doc.containsKey("battery_rate_baseline")) config.batteryRateBaseline = doc["battery_rate_baseline"];
 
   return true;
 }

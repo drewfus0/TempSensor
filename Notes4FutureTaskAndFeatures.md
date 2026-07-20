@@ -18,6 +18,13 @@ web pages stored currently in code other options: Flash, SPIFFS, or SD card?
 sd Card File manipulation. (delete rename download)
 
 display move the battery % to the 4th line with state reporting
+
+Improvements/tweaks:
+ - Data download to chunk in smaller pieces.
+ - Web page knows what it has and only download what is missing. 
+ - 
+
+
 # Completed Milestones
 
 ## Milestone 3: OTA, Stability & Calibrations (Completed)

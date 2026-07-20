@@ -11,6 +11,13 @@ class BatteryManager {
   const char* getStatus() const { return status_; }
   int32_t getTimeRemainingSeconds() const { return timeRemainingS_; }
   float getSlope() const { return slope_; }
+  void setBatteryRateBaseline(float rate) { smoothedSecondsPerPercent_ = rate; }
+  float getBatteryRateBaseline() const { return smoothedSecondsPerPercent_; }
+  bool checkAndClearBaselineChanged() {
+    bool changed = baselineChanged_;
+    baselineChanged_ = false;
+    return changed;
+  }
 
  private:
   void readBattery();
@@ -29,6 +36,12 @@ class BatteryManager {
   int lastRecordedPercent_ = -1;
   float smoothedSecondsPerPercent_ = 1000.0f;
   const char* lastStatus_ = "Unknown";
+
+  uint32_t validDischargeStartMs_ = 0;
+  int validDischargeStartPercent_ = -1;
+  uint8_t stateConfirmCount_ = 0;
+  float lastVoltage_ = -1.0f;
+  bool baselineChanged_ = false;
 
   static constexpr size_t HISTORY_SIZE = 10;
   float voltageHistory_[HISTORY_SIZE];

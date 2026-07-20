@@ -1002,7 +1002,7 @@ void WebManager::handleRoot() {
 
         <section class='card' style='margin-top: 20px;'>
           <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;'>
-            <h2 style='margin: 0;'>Battery Voltage History (48h)</h2>
+            <h2 style='margin: 0;'>Battery History & Prediction (3 Days)</h2>
             <div style='display: flex; gap: 8px; align-items: center;'>
               <button class='btn-refresh' onclick='forceRefreshTask("battery")' title='Force update battery history'>⟳</button>
               <button class='btn' id='btnDownloadBatCsv' style='padding: 6px 12px; font-size: 12px; margin: 0;'>Download CSV</button>
@@ -1070,6 +1070,17 @@ void WebManager::handleRoot() {
           <div class='form-group'>
             <label for='cfgDisplayRefreshInterval'>Display Refresh Interval (ms)</label>
             <input type='number' id='cfgDisplayRefreshInterval' class='form-control' min='500' max='60000' required>
+          </div>
+
+          <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 16px;'>
+            <div class='form-group'>
+              <label for='cfgLatitude'>Latitude (decimal degrees)</label>
+              <input type='number' id='cfgLatitude' class='form-control' step='0.000001' min='-90' max='90' required>
+            </div>
+            <div class='form-group'>
+              <label for='cfgLongitude'>Longitude (decimal degrees)</label>
+              <input type='number' id='cfgLongitude' class='form-control' step='0.000001' min='-180' max='180' required>
+            </div>
           </div>
 
           <button type='submit' class='btn' style='margin-top: 12px; padding: 12px; background: var(--accent); color: var(--text); border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s;'>Save & Apply Settings</button>
@@ -1155,6 +1166,52 @@ void WebManager::handleRoot() {
       if (key === 'uiIntervalSdTree') return 120;
       if (key === 'uiIntervalBattery') return 50;
       return 60;
+    }
+
+    function getSolarTimes(lat, lng, date, offsetHours) {
+      const radians = Math.PI / 180;
+      const degrees = 180 / Math.PI;
+
+      const start = new Date(date.getFullYear(), 0, 0);
+      const diff = date - start;
+      const oneDay = 1000 * 60 * 60 * 24;
+      const day = Math.floor(diff / oneDay);
+
+      const decl = 23.45 * Math.sin(radians * (360 / 365) * (day - 81));
+      const declRad = decl * radians;
+      const latRad = lat * radians;
+
+      const cosH = (Math.cos(90.83 * radians) - Math.sin(latRad) * Math.sin(declRad)) / (Math.cos(latRad) * Math.cos(declRad));
+      
+      if (cosH > 1) return { polarNight: true, sunrise: null, sunset: null };
+      if (cosH < -1) return { polarDay: true, sunrise: null, sunset: null };
+
+      const H = degrees * Math.acos(cosH);
+
+      const b = (360 / 365) * (day - 81) * radians;
+      const eqTime = 9.87 * Math.sin(2 * b) - 7.53 * Math.cos(b) - 1.5 * Math.sin(b);
+
+      const solarNoonUT = 12 - (lng / 15) - (eqTime / 60);
+      const localSolarNoon = (solarNoonUT + offsetHours + 24) % 24;
+
+      const sunriseHours = (localSolarNoon - (H / 15) + 24) % 24;
+      const sunsetHours = (localSolarNoon + (H / 15) + 24) % 24;
+
+      return { sunrise: sunriseHours, sunset: sunsetHours };
+    }
+
+    function percentToVoltage(pct) {
+      if (pct >= 100) return 4.15;
+      if (pct <= 0) return 3.40;
+      if (pct >= 80) {
+        return 4.00 + (pct - 80) / 20 * 0.15;
+      } else if (pct >= 50) {
+        return 3.82 + (pct - 50) / 30 * 0.18;
+      } else if (pct >= 15) {
+        return 3.70 + (pct - 15) / 35 * 0.12;
+      } else {
+        return 3.40 + (pct - 0) / 15 * 0.30;
+      }
     }
 
     function updateCountdowns() {
@@ -1752,15 +1809,81 @@ void WebManager::handleRoot() {
         return;
       }
 
-      const xData = [];
-      const vData = [];
+      // Sort dataset first to ensure chronological order (especially for circular log downloads)
+      dataset.sort((a, b) => a.ts - b.ts);
 
-      for (let i = 0; i < dataset.length; i++) {
-        xData.push(dataset[i].ts);
-        vData.push(dataset[i].v);
+      const lastPoint = dataset[dataset.length - 1];
+      const T_now = lastPoint.ts;
+      const V_now = lastPoint.v;
+      const P_now = lastPoint.p;
+      const status = lastPoint.s;
+      const tr = lastPoint.tr; // timeRemaining in seconds
+
+      // Generate 24 hours prediction points into the future
+      const predPoints = [];
+      const step = 600; // 10 minutes interval
+      
+      if (status === 'Discharging') {
+        let rate = 1000; // fallback default seconds per percent
+        if (tr > 0 && P_now > 0) {
+          rate = tr / P_now;
+        }
+        for (let dt = 0; dt <= 86400; dt += step) {
+          const t = T_now + dt;
+          let p = P_now - (dt / rate);
+          if (p < 0) p = 0;
+          const v = percentToVoltage(p);
+          predPoints.push({ ts: t, v: v, p: p });
+        }
+      } else if (status === 'Charging / USB') {
+        let chargeTime = tr > 0 ? tr : (100 - P_now) * 180; // default 5 hours if slope is flat/negative
+        for (let dt = 0; dt <= 86400; dt += step) {
+          const t = T_now + dt;
+          let p = P_now + ((100 - P_now) / chargeTime) * dt;
+          if (p > 100) p = 100;
+          const v = percentToVoltage(p);
+          predPoints.push({ ts: t, v: v, p: p });
+        }
+      } else {
+        // Full
+        for (let dt = 0; dt <= 86400; dt += step) {
+          predPoints.push({ ts: T_now + dt, v: 4.15, p: 100 });
+        }
       }
 
-      const data = [xData, vData];
+      // Arrays for uPlot (Combined timeline)
+      const xData = [];
+      const vHist = [];
+      const pHist = [];
+      const vPred = [];
+      const pPred = [];
+
+      // Add historical data
+      for (let i = 0; i < dataset.length; i++) {
+        const pt = dataset[i];
+        xData.push(pt.ts);
+        vHist.push(pt.v);
+        pHist.push(pt.p);
+        vPred.push(null);
+        pPred.push(null);
+      }
+
+      // Connect historical line to prediction line smoothly
+      const lastIdx = dataset.length - 1;
+      vPred[lastIdx] = dataset[lastIdx].v;
+      pPred[lastIdx] = dataset[lastIdx].p;
+
+      // Add prediction data
+      for (let i = 1; i < predPoints.length; i++) {
+        const pt = predPoints[i];
+        xData.push(pt.ts);
+        vHist.push(null);
+        pHist.push(null);
+        vPred.push(pt.v);
+        pPred.push(pt.p);
+      }
+
+      const data = [xData, vHist, pHist, vPred, pPred];
 
       const opts = {
         width: rect.width,
@@ -1778,8 +1901,12 @@ void WebManager::handleRoot() {
             time: true,
           },
           v: {
-            auto: true,
+            auto: false,
             range: [3.0, 4.3],
+          },
+          pct: {
+            auto: false,
+            range: [0, 100],
           }
         },
         series: [
@@ -1787,11 +1914,36 @@ void WebManager::handleRoot() {
           {
             show: true,
             scale: 'v',
-            label: 'Voltage',
-            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(2) + ' V' : '--',
+            label: 'Voltage (Hist)',
+            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(3) + ' V' : '--',
+            stroke: '#fbbf24', // Yellow
+            width: 2.5,
+          },
+          {
+            show: true,
+            scale: 'pct',
+            label: 'Capacity (Hist)',
+            value: (self, rawValue) => rawValue != null ? Math.round(rawValue) + ' %' : '--',
+            stroke: '#a855f7', // Purple
+            width: 2.5,
+          },
+          {
+            show: true,
+            scale: 'v',
+            label: 'Voltage (Pred)',
+            value: (self, rawValue) => rawValue != null ? rawValue.toFixed(3) + ' V' : '--',
             stroke: '#fbbf24',
-            width: 2,
-            fill: 'rgba(251, 191, 36, 0.04)',
+            width: 1.5,
+            dash: [4, 4],
+          },
+          {
+            show: true,
+            scale: 'pct',
+            label: 'Capacity (Pred)',
+            value: (self, rawValue) => rawValue != null ? Math.round(rawValue) + ' %' : '--',
+            stroke: '#a855f7',
+            width: 1.5,
+            dash: [4, 4],
           }
         ],
         axes: [
@@ -1812,7 +1964,7 @@ void WebManager::handleRoot() {
           {
             scale: 'v',
             side: 3,
-            stroke: "rgba(255, 255, 255, 0.5)",
+            stroke: "#fbbf24",
             grid: {
               show: true,
               stroke: "rgba(255, 255, 255, 0.05)",
@@ -1824,8 +1976,110 @@ void WebManager::handleRoot() {
               width: 1,
             },
             space: 30,
+          },
+          {
+            scale: 'pct',
+            side: 1,
+            stroke: "#a855f7",
+            grid: {
+              show: false,
+            },
+            ticks: {
+              show: true,
+              stroke: "rgba(255, 255, 255, 0.1)",
+              width: 1,
+            },
+            space: 30,
           }
-        ]
+        ],
+        hooks: {
+          drawClear: [
+            (u) => {
+              const ctx = u.ctx;
+              const xMin = u.scales.x.min;
+              const xMax = u.scales.x.max;
+              const yMin = u.valToPos(u.scales.v.min, 'y');
+              const yMax = u.valToPos(u.scales.v.max, 'y');
+              
+              ctx.save();
+              
+              const lat = parseFloat($('cfgLatitude')?.value || localStorage.getItem('cfgLatitude') || -37.8136);
+              const lng = parseFloat($('cfgLongitude')?.value || localStorage.getItem('cfgLongitude') || 144.9631);
+              const offsetHours = -new Date().getTimezoneOffset() / 60;
+              
+              const minDate = new Date(xMin * 1000);
+              const maxDate = new Date(xMax * 1000);
+              
+              let curDate = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate());
+              curDate.setDate(curDate.getDate() - 1);
+              
+              while (curDate <= maxDate) {
+                const times = getSolarTimes(lat, lng, curDate, offsetHours);
+                if (times && times.sunrise != null && times.sunset != null) {
+                  const dayStart = new Date(curDate.getFullYear(), curDate.getMonth(), curDate.getDate()).getTime() / 1000;
+                  const sunriseEpoch = dayStart + times.sunrise * 3600;
+                  const sunsetEpoch = dayStart + times.sunset * 3600;
+                  const nextDayStart = dayStart + 24 * 3600;
+                  
+                  // Night shade 1: day start to sunrise
+                  const nb1Start = Math.max(xMin, dayStart);
+                  const nb1End = Math.min(xMax, sunriseEpoch);
+                  if (nb1Start < nb1End) {
+                    const pxStart = u.valToPos(nb1Start, 'x');
+                    const pxEnd = u.valToPos(nb1End, 'x');
+                    ctx.fillStyle = 'rgba(15, 23, 42, 0.35)'; // Dark night shading
+                    ctx.fillRect(pxStart, yMax, pxEnd - pxStart, yMin - yMax);
+                  }
+                  
+                  // Night shade 2: sunset to next day start
+                  const nb2Start = Math.max(xMin, sunsetEpoch);
+                  const nb2End = Math.min(xMax, nextDayStart);
+                  if (nb2Start < nb2End) {
+                    const pxStart = u.valToPos(nb2Start, 'x');
+                    const pxEnd = u.valToPos(nb2End, 'x');
+                    ctx.fillStyle = 'rgba(15, 23, 42, 0.35)';
+                    ctx.fillRect(pxStart, yMax, pxEnd - pxStart, yMin - yMax);
+                  }
+                  
+                  // Draw Sunrise/Sunset dotted lines and labels
+                  ctx.lineWidth = 1.0;
+                  ctx.setLineDash([3, 4]);
+                  
+                  if (sunriseEpoch >= xMin && sunriseEpoch <= xMax) {
+                    const px = u.valToPos(sunriseEpoch, 'x');
+                    ctx.strokeStyle = 'rgba(250, 204, 21, 0.35)';
+                    ctx.beginPath();
+                    ctx.moveTo(px, yMax);
+                    ctx.lineTo(px, yMin);
+                    ctx.stroke();
+                    
+                    ctx.fillStyle = 'rgba(250, 204, 21, 0.6)';
+                    ctx.font = '9px var(--font-sans)';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Sunrise', px, yMax + 12);
+                  }
+                  
+                  if (sunsetEpoch >= xMin && sunsetEpoch <= xMax) {
+                    const px = u.valToPos(sunsetEpoch, 'x');
+                    ctx.strokeStyle = 'rgba(249, 115, 22, 0.35)';
+                    ctx.beginPath();
+                    ctx.moveTo(px, yMax);
+                    ctx.lineTo(px, yMin);
+                    ctx.stroke();
+                    
+                    ctx.fillStyle = 'rgba(249, 115, 22, 0.6)';
+                    ctx.font = '9px var(--font-sans)';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Sunset', px, yMax + 12);
+                  }
+                }
+                curDate.setDate(curDate.getDate() + 1);
+              }
+              
+              ctx.restore();
+            }
+          ]
+        }
       };
 
       target.innerHTML = '';
@@ -1892,7 +2146,7 @@ void WebManager::handleRoot() {
 
         if (dataset.length > 0) {
           const lastPoint = dataset[dataset.length - 1];
-          let metaText = `Loaded ${dataset.length} points. Latest: ${lastPoint.v.toFixed(2)}V (${lastPoint.p}%) - ${lastPoint.s}`;
+          let metaText = `Loaded ${dataset.length} points. Latest: ${lastPoint.v.toFixed(3)}V (${lastPoint.p}%) - ${lastPoint.s}`;
           if (lastPoint.tr && lastPoint.tr > 0) {
             const hours = Math.floor(lastPoint.tr / 3600);
             const mins = Math.floor((lastPoint.tr % 3600) / 60);
@@ -2121,7 +2375,7 @@ void WebManager::handleRoot() {
       }
       let csvContent = "timestamp,voltage,percent,status,time_remaining_s\n";
       for (const pt of loadedBatteryData) {
-        csvContent += pt.tsStr + "," + pt.v.toFixed(2) + "," + pt.p + "," + pt.s + "," + pt.tr + "\n";
+        csvContent += pt.tsStr + "," + pt.v.toFixed(3) + "," + pt.p + "," + pt.s + "," + pt.tr + "\n";
       }
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement("a");
@@ -2266,7 +2520,7 @@ void WebManager::handleRoot() {
           if (health.battery) {
             const bat = health.battery;
             const percent = bat.percent;
-            const voltage = bat.voltage.toFixed(2);
+            const voltage = bat.voltage.toFixed(3);
             
             let timeText = "";
             if (bat.status === "Full") {
@@ -2352,6 +2606,11 @@ void WebManager::handleRoot() {
         $('cfgSampleInterval').value = cfg.sample_interval_ms;
         $('cfgLogFlushInterval').value = cfg.log_flush_interval_ms;
         $('cfgDisplayRefreshInterval').value = cfg.display_refresh_interval_ms;
+        $('cfgLatitude').value = cfg.latitude != null ? cfg.latitude : -37.8136;
+        $('cfgLongitude').value = cfg.longitude != null ? cfg.longitude : 144.9631;
+        
+        localStorage.setItem('cfgLatitude', $('cfgLatitude').value);
+        localStorage.setItem('cfgLongitude', $('cfgLongitude').value);
       } catch (err) {
         console.error("Config fetch error", err);
       }
@@ -2367,8 +2626,13 @@ void WebManager::handleRoot() {
         timezone: $('cfgTimezone').value,
         sample_interval_ms: parseInt($('cfgSampleInterval').value),
         log_flush_interval_ms: parseInt($('cfgLogFlushInterval').value),
-        display_refresh_interval_ms: parseInt($('cfgDisplayRefreshInterval').value)
+        display_refresh_interval_ms: parseInt($('cfgDisplayRefreshInterval').value),
+        latitude: parseFloat($('cfgLatitude').value),
+        longitude: parseFloat($('cfgLongitude').value)
       };
+
+      localStorage.setItem('cfgLatitude', payload.latitude);
+      localStorage.setItem('cfgLongitude', payload.longitude);
 
       const pwd = $('cfgWifiPassword').value;
       if (pwd.length > 0) {
@@ -2855,6 +3119,8 @@ void WebManager::handleConfigGet() {
   doc["sample_interval_ms"] = config_->sampleIntervalMs;
   doc["log_flush_interval_ms"] = config_->logFlushIntervalMs;
   doc["display_refresh_interval_ms"] = config_->displayRefreshIntervalMs;
+  doc["latitude"] = config_->latitude;
+  doc["longitude"] = config_->longitude;
   doc["phase"] = "milestone4";
 
   String response;
@@ -2919,6 +3185,12 @@ void WebManager::handleConfigPost() {
   }
   if (requested.containsKey("display_refresh_interval_ms")) {
     config_->displayRefreshIntervalMs = requested["display_refresh_interval_ms"];
+  }
+  if (requested.containsKey("latitude")) {
+    config_->latitude = requested["latitude"];
+  }
+  if (requested.containsKey("longitude")) {
+    config_->longitude = requested["longitude"];
   }
 
   // Save the configuration to the SD card

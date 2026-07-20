@@ -131,11 +131,29 @@ void AppCoordinator::loop() {
   handleDiagnostics(nowMs);
   refreshHealth(nowMs);
 
-  // Log battery statistics to /logs/battery.csv every 60 seconds
+  // Log battery statistics to /logs/battery.bin every 60 seconds
   if (nowMs - lastBatteryLogMs_ >= 60000) {
     lastBatteryLogMs_ = nowMs;
     time_t epochTime = time(nullptr);
     loggerManager_.logBattery(epochTime, batteryManager_.getVoltage(), batteryManager_.getPercent(), batteryManager_.getStatus(), batteryManager_.getTimeRemainingSeconds());
+    
+    // Save updated battery baseline rate to SD card ONLY when evaluated at the end of a valid discharge run
+    if (batteryManager_.checkAndClearBaselineChanged()) {
+      float prevRate = config_.batteryRateBaseline;
+      float newRate = batteryManager_.getBatteryRateBaseline();
+      config_.batteryRateBaseline = newRate;
+      loggerManager_.saveDeviceConfig(config_);
+      Serial.printf("[Config] Evaluated discharge run baseline saved to SD: %.1fs/%%\n", newRate);
+
+      // Log event to /logs/events.csv showing Prev -> New calibration values
+      char ts[32]{};
+      TimestampQuality quality = TimestampQuality::Estimated;
+      timeManager_.getTimestamp(ts, sizeof(ts), quality);
+
+      char eventBuf[64]{};
+      snprintf(eventBuf, sizeof(eventBuf), "battery_rate_calibrated (%.0fs -> %.0fs)", prevRate, newRate);
+      loggerManager_.logEvent(eventBuf, ts, quality);
+    }
   }
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -285,11 +303,15 @@ void AppCoordinator::initConfiguration() {
     config_.sampleIntervalMs = AppConfig::SAMPLE_INTERVAL_MS;
     config_.logFlushIntervalMs = AppConfig::LOG_FLUSH_INTERVAL_MS;
     config_.displayRefreshIntervalMs = AppConfig::DISPLAY_REFRESH_INTERVAL_MS;
+    config_.batteryRateBaseline = 1000.0f;
 
     // Save defaults to SD card if possible
     loggerManager_.saveDeviceConfig(config_);
   } else {
-    Serial.printf("[Config] Loaded settings from SD card. SSID: %s, Hostname: %s, Timezone: %s\n",
-                  config_.wifiSsid, config_.hostname, config_.timezone);
+    Serial.printf("[Config] Loaded settings from SD card. SSID: %s, Hostname: %s, Timezone: %s, Battery Rate Baseline: %.1f\n",
+                  config_.wifiSsid, config_.hostname, config_.timezone, config_.batteryRateBaseline);
   }
+
+  // Set the loaded battery baseline rate in the BatteryManager
+  batteryManager_.setBatteryRateBaseline(config_.batteryRateBaseline);
 }
