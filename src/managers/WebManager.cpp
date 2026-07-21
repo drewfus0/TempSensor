@@ -2180,9 +2180,11 @@ void WebManager::handleRoot() {
               },
               axes: {
                 y: {
+                  axisLabelColor: '#fbbf24',
                   valueRange: [3.0, 4.3]
                 },
                 y2: {
+                  axisLabelColor: '#a855f7',
                   valueRange: [0, 100]
                 }
               }
