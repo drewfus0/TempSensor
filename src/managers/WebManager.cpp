@@ -1011,6 +1011,19 @@ void WebManager::handleRoot() {
               <label for='hoursPast'>Hours Past</label>
               <input type='number' id='hoursPast' class='form-control' min='1' max='168' value='3'>
             </div>
+
+            <div class='form-group'>
+              <label for='binMode'>Bin Size</label>
+              <select id='binMode' onchange='loadHistory()'>
+                <option value='auto' selected>Auto</option>
+                <option value='60'>1 min</option>
+                <option value='180'>3 min</option>
+                <option value='300'>5 min</option>
+                <option value='600'>10 min</option>
+                <option value='1800'>30 min</option>
+                <option value='3600'>1 hour</option>
+              </select>
+            </div>
           </div>
           
           <div class='controls-grid' id='customRangeGroup' style='grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; display: none;'>
@@ -2067,12 +2080,28 @@ void WebManager::handleRoot() {
         }
 
         if (allPoints.length > 0) {
-          const totalHours = (endDate.getTime() - startDate.getTime()) / (3600 * 1000);
+          const selectedBinMode = $('binMode').value;
           let binSizeSec = 60;
-          if (totalHours <= 1) binSizeSec = 60;        // 1 min bins
-          else if (totalHours <= 6) binSizeSec = 180;   // 3 min bins
-          else if (totalHours <= 24) binSizeSec = 600;  // 10 min bins
-          else binSizeSec = 1800;                       // 30 min bins
+          let isAuto = false;
+
+          if (selectedBinMode === 'auto') {
+            isAuto = true;
+            const totalHours = (endDate.getTime() - startDate.getTime()) / (3600 * 1000);
+            if (totalHours <= 1) binSizeSec = 60;        // 1 min bins
+            else if (totalHours <= 6) binSizeSec = 180;   // 3 min bins
+            else if (totalHours <= 24) binSizeSec = 600;  // 10 min bins
+            else binSizeSec = 1800;                       // 30 min bins
+          } else {
+            binSizeSec = parseInt(selectedBinMode);
+          }
+
+          const binSizeText = (sec) => {
+            if (sec < 60) return sec + 's';
+            if (sec < 3600) return (sec / 60) + 'm';
+            return (sec / 3600) + 'h';
+          };
+
+          const activeBinLabel = isAuto ? `Auto (${binSizeText(binSizeSec)})` : binSizeText(binSizeSec);
 
           function aggregateBins(rawPoints, binSizeSeconds) {
             if (rawPoints.length === 0) return [];
@@ -2239,7 +2268,7 @@ void WebManager::handleRoot() {
               }
             }
           );
-          setText('historyMeta', 'Total Points: ' + allPoints.length + ' (Cached Chunks: ' + fetchedChunkKeys.size + ', Bins: ' + bins.length + ')');
+          setText('historyMeta', `Total Points: ${allPoints.length} (Cached Chunks: ${fetchedChunkKeys.size}, Bin Size: ${activeBinLabel}, Bins: ${bins.length})`);
         } else {
           document.getElementById("chart").innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 300px;">No data in this range.</div>`;
           setText('historyMeta', 'No data loaded.');
