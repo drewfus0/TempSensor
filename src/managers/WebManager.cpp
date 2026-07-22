@@ -464,7 +464,7 @@ void WebManager::handleRoot() {
     .chart-container {
       position: relative;
       width: 100%;
-      height: 320px;
+      height: 384px;
       margin-top: 8px;
       border-radius: 6px;
       background: rgba(0, 0, 0, 0.25);
@@ -2080,15 +2080,20 @@ void WebManager::handleRoot() {
             if (p.pres > pMax) pMax = p.pres;
           });
 
-          const getPaddedBounds = (min, max) => {
+          const getPaddedBounds = (min, max, minRange) => {
             let range = max - min;
-            if (range <= 0) range = 1.0;
+            if (range < minRange) {
+              const center = (min + max) / 2;
+              min = center - minRange / 2;
+              max = center + minRange / 2;
+              range = minRange;
+            }
             return [min - range * 0.05, max + range * 0.05];
           };
 
-          const [tMinP, tMaxP] = getPaddedBounds(tMin, tMax);
-          const [hMinP, hMaxP] = getPaddedBounds(hMin, hMax);
-          const [pMinP, pMaxP] = getPaddedBounds(pMin, pMax);
+          const [tMinP, tMaxP] = getPaddedBounds(tMin, tMax, 2.0);
+          const [hMinP, hMaxP] = getPaddedBounds(hMin, hMax, 15.0);
+          const [pMinP, pMaxP] = getPaddedBounds(pMin, pMax, 5.0);
 
           const dyData = allPoints.map(p => [
             p.date,
