@@ -2067,17 +2067,77 @@ void WebManager::handleRoot() {
         }
 
         if (allPoints.length > 0) {
+          const totalHours = (endDate.getTime() - startDate.getTime()) / (3600 * 1000);
+          let binSizeSec = 60;
+          if (totalHours <= 1) binSizeSec = 60;        // 1 min bins
+          else if (totalHours <= 6) binSizeSec = 180;   // 3 min bins
+          else if (totalHours <= 24) binSizeSec = 600;  // 10 min bins
+          else binSizeSec = 1800;                       // 30 min bins
+
+          function aggregateBins(rawPoints, binSizeSeconds) {
+            if (rawPoints.length === 0) return [];
+            const bins = [];
+            const binSizeMs = binSizeSeconds * 1000;
+            const startMs = rawPoints[0].date.getTime();
+            
+            let currentBinStart = startMs;
+            let currentPoints = [];
+            
+            for (let i = 0; i < rawPoints.length; i++) {
+              const pt = rawPoints[i];
+              const ptMs = pt.date.getTime();
+              
+              while (ptMs >= currentBinStart + binSizeMs) {
+                if (currentPoints.length > 0) {
+                  bins.push(makeBin(currentBinStart + binSizeMs / 2, currentPoints));
+                  currentPoints = [];
+                }
+                currentBinStart += binSizeMs;
+              }
+              currentPoints.push(pt);
+            }
+            if (currentPoints.length > 0) {
+              bins.push(makeBin(currentBinStart + binSizeMs / 2, currentPoints));
+            }
+            return bins;
+          }
+
+          function makeBin(centerTimeMs, pts) {
+            let tMin = Infinity, tMax = -Infinity, tSum = 0;
+            let hMin = Infinity, hMax = -Infinity, hSum = 0;
+            let pMin = Infinity, pMax = -Infinity, pSum = 0;
+            pts.forEach(p => {
+              if (p.temp < tMin) tMin = p.temp;
+              if (p.temp > tMax) tMax = p.temp;
+              tSum += p.temp;
+              if (p.hum < hMin) hMin = p.hum;
+              if (p.hum > hMax) hMax = p.hum;
+              hSum += p.hum;
+              if (p.pres < pMin) pMin = p.pres;
+              if (p.pres > pMax) pMax = p.pres;
+              pSum += p.pres;
+            });
+            return {
+              date: new Date(centerTimeMs),
+              temp: { min: tMin, avg: tSum / pts.length, max: tMax },
+              hum: { min: hMin, avg: hSum / pts.length, max: hMax },
+              pres: { min: pMin, avg: pSum / pts.length, max: pMax }
+            };
+          }
+
+          const bins = aggregateBins(allPoints, binSizeSec);
+
           let tMin = Infinity, tMax = -Infinity;
           let hMin = Infinity, hMax = -Infinity;
           let pMin = Infinity, pMax = -Infinity;
 
-          allPoints.forEach(p => {
-            if (p.temp < tMin) tMin = p.temp;
-            if (p.temp > tMax) tMax = p.temp;
-            if (p.hum < hMin) hMin = p.hum;
-            if (p.hum > hMax) hMax = p.hum;
-            if (p.pres < pMin) pMin = p.pres;
-            if (p.pres > pMax) pMax = p.pres;
+          bins.forEach(b => {
+            if (b.temp.min < tMin) tMin = b.temp.min;
+            if (b.temp.max > tMax) tMax = b.temp.max;
+            if (b.hum.min < hMin) hMin = b.hum.min;
+            if (b.hum.max > hMax) hMax = b.hum.max;
+            if (b.pres.min < pMin) pMin = b.pres.min;
+            if (b.pres.max > pMax) pMax = b.pres.max;
           });
 
           const getPaddedBounds = (min, max, minRange) => {
@@ -2095,17 +2155,30 @@ void WebManager::handleRoot() {
           const [hMinP, hMaxP] = getPaddedBounds(hMin, hMax, 15.0);
           const [pMinP, pMaxP] = getPaddedBounds(pMin, pMax, 5.0);
 
-          const dyData = allPoints.map(p => [
-            p.date,
-            ((p.temp - tMinP) / (tMaxP - tMinP)) * 100,
-            ((p.hum - hMinP) / (hMaxP - hMinP)) * 100,
-            ((p.pres - pMinP) / (pMaxP - pMinP)) * 100
+          const dyData = bins.map(b => [
+            b.date,
+            [
+              ((b.temp.min - tMinP) / (tMaxP - tMinP)) * 100,
+              ((b.temp.avg - tMinP) / (tMaxP - tMinP)) * 100,
+              ((b.temp.max - tMinP) / (tMaxP - tMinP)) * 100
+            ],
+            [
+              ((b.hum.min - hMinP) / (hMaxP - hMinP)) * 100,
+              ((b.hum.avg - hMinP) / (hMaxP - hMinP)) * 100,
+              ((b.hum.max - hMinP) / (hMaxP - hMinP)) * 100
+            ],
+            [
+              ((b.pres.min - pMinP) / (pMaxP - pMinP)) * 100,
+              ((b.pres.avg - pMinP) / (pMaxP - pMinP)) * 100,
+              ((b.pres.max - pMinP) / (pMaxP - pMinP)) * 100
+            ]
           ]);
 
           dygraphInstance = new Dygraph(
             document.getElementById("chart"),
             dyData,
             {
+              customBars: true,
               labels: [ "Time", "Temperature", "Humidity", "Pressure" ],
               colors: [ "#f43f5e", "#06b6d4", "#10b981" ],
               strokeWidth: 2,
@@ -2138,23 +2211,27 @@ void WebManager::handleRoot() {
               },
               legendFormatter: function(data) {
                 if (!data.x) {
-                  if (allPoints.length === 0) return '';
-                  const last = allPoints[allPoints.length - 1];
+                  if (bins.length === 0) return '';
+                  const last = bins[bins.length - 1];
                   return `<div style="color:var(--text-sub); font-weight:500; margin-right:8px;">Latest:</div>` +
-                    `<div style="color:#f43f5e; font-weight:600;">Temp: ${last.temp.toFixed(2)} °C</div>` +
-                    `<div style="color:#06b6d4; font-weight:600;">Hum: ${last.hum.toFixed(2)} %</div>` +
-                    `<div style="color:#10b981; font-weight:600;">Pres: ${last.pres.toFixed(1)} hPa</div>`;
+                    `<div style="color:#f43f5e; font-weight:600;">Temp: ${last.temp.avg.toFixed(2)} [${last.temp.min.toFixed(1)}-${last.temp.max.toFixed(1)}] °C</div>` +
+                    `<div style="color:#06b6d4; font-weight:600;">Hum: ${last.hum.avg.toFixed(1)} [${last.hum.min.toFixed(0)}-${last.hum.max.toFixed(0)}] %</div>` +
+                    `<div style="color:#10b981; font-weight:600;">Pres: ${last.pres.avg.toFixed(1)} [${last.pres.min.toFixed(1)}-${last.pres.max.toFixed(1)}] hPa</div>`;
                 }
-                const pt = allPoints.find(p => p.date.getTime() === data.x);
+                const pt = bins.find(b => b.date.getTime() === data.x);
                 const timeStr = data.xHTML;
                 let html = `<div style="color:var(--text-sub); font-weight:500; margin-right:8px;">${timeStr}</div>`;
                 data.series.forEach(s => {
                   if (!s.isVisible) return;
                   let valStr = '--';
                   if (pt) {
-                    if (s.label === 'Temperature') valStr = pt.temp.toFixed(2) + ' °C';
-                    else if (s.label === 'Humidity') valStr = pt.hum.toFixed(2) + ' %';
-                    else if (s.label === 'Pressure') valStr = pt.pres.toFixed(1) + ' hPa';
+                    if (s.label === 'Temperature') {
+                      valStr = `${pt.temp.avg.toFixed(2)} [${pt.temp.min.toFixed(1)}-${pt.temp.max.toFixed(1)}] °C`;
+                    } else if (s.label === 'Humidity') {
+                      valStr = `${pt.hum.avg.toFixed(1)} [${pt.hum.min.toFixed(0)}-${pt.hum.max.toFixed(0)}] %`;
+                    } else if (s.label === 'Pressure') {
+                      valStr = `${pt.pres.avg.toFixed(1)} [${pt.pres.min.toFixed(1)}-${pt.pres.max.toFixed(1)}] hPa`;
+                    }
                   }
                   html += `<div style="color:${s.color}; font-weight:600;">${s.label}: ${valStr}</div>`;
                 });
@@ -2162,7 +2239,7 @@ void WebManager::handleRoot() {
               }
             }
           );
-          setText('historyMeta', 'Total Points: ' + allPoints.length + ' (Cached Chunks: ' + fetchedChunkKeys.size + ')');
+          setText('historyMeta', 'Total Points: ' + allPoints.length + ' (Cached Chunks: ' + fetchedChunkKeys.size + ', Bins: ' + bins.length + ')');
         } else {
           document.getElementById("chart").innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 300px;">No data in this range.</div>`;
           setText('historyMeta', 'No data loaded.');
