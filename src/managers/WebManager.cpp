@@ -100,6 +100,7 @@ void WebManager::loop() {
 void WebManager::registerRoutes() {
   server_.on("/", [this]() { logRequest(); handleRoot(); });
 
+  server_.on("/favicon.ico", [this]() { server_.send(204, "image/x-icon", ""); });
   server_.on("/api/live", [this]() { logRequest(); handleLiveJson(); });
   server_.on("/api/health", [this]() { logRequest(); handleHealthJson(); });
   server_.on("/api/config", HTTP_GET, [this]() { logRequest(); handleConfigGet(); });
@@ -464,21 +465,38 @@ void WebManager::handleRoot() {
       position: relative;
       width: 100%;
       height: 320px;
-      margin-top: 12px;
+      margin-top: 8px;
       border-radius: 6px;
       background: rgba(0, 0, 0, 0.25);
       overflow: hidden;
       border: 1px solid var(--card-border);
       padding: 10px;
     }
-    .dygraph-legend {
-      background-color: rgba(21, 27, 43, 0.9) !important;
-      border: 1px solid var(--card-border) !important;
-      color: var(--text) !important;
-      font-family: var(--font-main) !important;
-      font-size: 12px !important;
-      border-radius: 4px;
-      padding: 6px !important;
+    .chart-legend-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 8px 12px;
+      background: rgba(21, 27, 43, 0.6);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      margin-top: 12px;
+      margin-bottom: 4px;
+      font-size: 0.82rem;
+      min-height: 36px;
+      font-family: var(--font-main);
+    }
+    .chart-legend-bar .dygraph-legend {
+      position: static !important;
+      background: transparent !important;
+      border: none !important;
+      padding: 0 !important;
+      display: flex !important;
+      flex-wrap: wrap !important;
+      gap: 16px !important;
+      width: 100% !important;
     }
     .dygraph-axis-label {
       color: var(--text-sub) !important;
@@ -980,16 +998,18 @@ void WebManager::handleRoot() {
       <div style='display: flex; flex-direction: column; gap: 20px;'>
         <section class='card' style='flex: 1; display: flex; flex-direction: column;'>
           <h2>Historical Chart</h2>
-          <div class='controls-grid' style='grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 8px;'>
+          <div class='controls-grid' style='grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 8px;'>
             <div class='form-group'>
-              <label for='range'>Range</label>
-              <select id='range'>
-                <option value='15m'>Last 15m</option>
-                <option value='1h' selected>Last 1h</option>
-                <option value='6h'>Last 6h</option>
-                <option value='24h'>Last 24h</option>
-                <option value='custom'>Custom</option>
+              <label for='rangeMode'>Filter Mode</label>
+              <select id='rangeMode' onchange='onRangeModeChanged()'>
+                <option value='hours' selected>Hours Into Past</option>
+                <option value='custom'>Custom Time Window</option>
               </select>
+            </div>
+            
+            <div class='form-group' id='hoursGroup'>
+              <label for='hoursPast'>Hours Past</label>
+              <input type='number' id='hoursPast' class='form-control' min='1' max='168' value='3'>
             </div>
           </div>
           
@@ -1011,19 +1031,9 @@ void WebManager::handleRoot() {
           
           <div class='alert-banner' id='historyAlert' style='margin-bottom: 10px;'></div>
 
+          <div id='historyLegend' class='chart-legend-bar'></div>
           <div class='chart-container'>
             <div id='chart' style='width: 100%; height: 100%;'></div>
-          </div>
-          <div style='display: flex; gap: 16px; margin-top: 10px; justify-content: center; font-size: 14px;'>
-            <label style='display: flex; align-items: center; gap: 6px; cursor: pointer; color: #f43f5e;'>
-              <input type='checkbox' id='chkTemp' checked onchange='updateVisibility()'> Temperature (°C)
-            </label>
-            <label style='display: flex; align-items: center; gap: 6px; cursor: pointer; color: #06b6d4;'>
-              <input type='checkbox' id='chkHum' checked onchange='updateVisibility()'> Humidity (%)
-            </label>
-            <label style='display: flex; align-items: center; gap: 6px; cursor: pointer; color: #10b981;'>
-              <input type='checkbox' id='chkPres' onchange='updateVisibility()'> Pressure (hPa)
-            </label>
           </div>
           <div class='live-meta' id='historyMeta' style='margin-top: 12px; text-align: left;'>
             No history data loaded.
@@ -1038,6 +1048,7 @@ void WebManager::handleRoot() {
               <button class='btn' id='btnDownloadBatCsv' style='padding: 6px 12px; font-size: 12px; margin: 0;'>Download CSV</button>
             </div>
           </div>
+          <div id='batChartLegend' class='chart-legend-bar'></div>
           <div class='chart-container' style='height: 250px;'>
             <div id='batChart' style='width: 100%; height: 100%;'></div>
           </div>
@@ -1175,6 +1186,8 @@ void WebManager::handleRoot() {
     let loadedBatteryData = [];
     let historyLoaded = false;
     let isLoadingHistory = false;
+    let cachedHistoryMap = new Map();
+    let fetchedChunkKeys = new Set();
 
     const $ = (id) => document.getElementById(id);
     
@@ -1782,7 +1795,7 @@ void WebManager::handleRoot() {
     $('btnDownloadCsv').addEventListener('click', downloadFilteredCSV);
     $('btnDownloadBatCsv').addEventListener('click', downloadBatteryCSV);
     $('btnSaveUiIntervals').addEventListener('click', saveUiIntervals);
-    $('range').addEventListener('change', onRangeChanged);
+    $('rangeMode').addEventListener('change', onRangeModeChanged);
 
     // OTA File Upload Handler
     const otaFile = $('otaFile');
@@ -1922,7 +1935,6 @@ void WebManager::handleRoot() {
         resetOtaUI();
       };
 
-      xhr.send(formData);
     });
 
     function updateModalProgress(percent, status) {
@@ -1944,22 +1956,18 @@ void WebManager::handleRoot() {
 
       let startDate = null;
       let endDate = null;
-      const range = $('range').value;
+      const mode = $('rangeMode').value;
       const now = new Date();
-      if (range === 'custom') {
+
+      if (mode === 'hours') {
+        const hrsPast = parseInt($('hoursPast').value) || 3;
+        startDate = new Date(now.getTime() - hrsPast * 60 * 60 * 1000);
+        endDate = now;
+      } else if (mode === 'custom') {
         const s = $('start').value;
         const e = $('end').value;
         if (s) startDate = new Date(s.replace('T', ' ') + ':00');
         if (e) endDate = new Date(e.replace('T', ' ') + ':00');
-      } else {
-        const mins = {
-          '15m': 15,
-          '1h': 60,
-          '6h': 360,
-          '24h': 1440
-        }[range] || 60;
-        startDate = new Date(now.getTime() - mins * 60000);
-        endDate = now;
       }
 
       if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
@@ -1971,67 +1979,85 @@ void WebManager::handleRoot() {
         return;
       }
 
-      const chunkMs = 1 * 3600 * 1000;
-      const totalMs = endDate.getTime() - startDate.getTime();
-      const numChunks = Math.ceil(totalMs / chunkMs);
-      
-      let allPoints = [];
+      const HOUR_MS = 3600000;
+      const startChunkKey = Math.floor(startDate.getTime() / HOUR_MS);
+      const endChunkKey = Math.floor(endDate.getTime() / HOUR_MS);
+
+      const missingChunkKeys = [];
+      for (let k = startChunkKey; k <= endChunkKey; k++) {
+        if (!fetchedChunkKeys.has(k)) {
+          missingChunkKeys.push(k);
+        }
+      }
 
       try {
-        setText('historyMeta', 'Initializing chunked download...');
-        
-        for (let i = 0; i < numChunks; i++) {
-          const chunkStart = new Date(startDate.getTime() + i * chunkMs);
-          const chunkEnd = new Date(Math.min(startDate.getTime() + (i + 1) * chunkMs - 1000, endDate.getTime()));
+        if (missingChunkKeys.length > 0) {
+          setText('historyMeta', `Fetching missing data (${missingChunkKeys.length} chunk${missingChunkKeys.length > 1 ? 's' : ''})...`);
           
-          const startStr = fmtLocalTs(chunkStart);
-          const endStr = fmtLocalTs(chunkEnd);
-          
-          updateModalProgress(
-            (i / numChunks) * 80 + 10,
-            `Downloading chunk ${i + 1}/${numChunks} (${Math.round((i / numChunks) * 100)}%)...`
-          );
-          
-          const url = '/api/history?start=' + encodeURIComponent(startStr) + '&end=' + encodeURIComponent(endStr);
-          const res = await fetch(url, { cache: 'no-store' });
-          if (!res.ok) {
-            throw new Error(`HTTP status ${res.status} on chunk ${i + 1}`);
-          }
-          
-          const startTimestampStr = res.headers.get('X-Start-Timestamp') || startStr;
-          const intervalMs = parseInt(res.headers.get('X-Sample-Interval-Ms') || '1000');
-          const recordSize = parseInt(res.headers.get('X-Record-Size') || '17');
-
-          const arrayBuffer = await res.arrayBuffer();
-          const view = new DataView(arrayBuffer);
-          const totalRecords = arrayBuffer.byteLength / recordSize;
-          const baseTime = new Date(startTimestampStr.replace(' ', 'T')).getTime();
-          
-          for (let r = 0; r < totalRecords; r++) {
-            const offset = r * recordSize;
-            const uptime = view.getUint32(offset + 0, true);
-            const temp = view.getFloat32(offset + 4, true);
-            const hum = view.getFloat32(offset + 8, true);
-            const pres = view.getFloat32(offset + 12, true);
-            const quality = view.getUint8(offset + 16);
-
-            if (quality === 2) {
-              continue;
+          for (let i = 0; i < missingChunkKeys.length; i++) {
+            const k = missingChunkKeys[i];
+            const chunkStart = new Date(k * HOUR_MS);
+            const chunkEnd = new Date((k + 1) * HOUR_MS - 1000);
+            
+            const startStr = fmtLocalTs(chunkStart);
+            const endStr = fmtLocalTs(chunkEnd);
+            
+            updateModalProgress(
+              (i / missingChunkKeys.length) * 80 + 10,
+              `Downloading chunk ${i + 1}/${missingChunkKeys.length} (${Math.round(((i + 1) / missingChunkKeys.length) * 100)}%)...`
+            );
+            
+            const url = '/api/history?start=' + encodeURIComponent(startStr) + '&end=' + encodeURIComponent(endStr);
+            const res = await fetch(url, { cache: 'no-store' });
+            if (!res.ok) {
+              throw new Error(`HTTP status ${res.status} on chunk ${i + 1}`);
             }
+            
+            const startTimestampStr = res.headers.get('X-Start-Timestamp') || startStr;
+            const intervalMs = parseInt(res.headers.get('X-Sample-Interval-Ms') || '1000');
+            const recordSize = parseInt(res.headers.get('X-Record-Size') || '17');
 
-            const recTime = new Date(baseTime + r * intervalMs);
+            const arrayBuffer = await res.arrayBuffer();
+            const view = new DataView(arrayBuffer);
+            const totalRecords = arrayBuffer.byteLength / recordSize;
+            const baseTime = new Date(startTimestampStr.replace(' ', 'T')).getTime();
+            
+            for (let r = 0; r < totalRecords; r++) {
+              const offset = r * recordSize;
+              const quality = view.getUint8(offset + 16);
+              if (quality === 2) continue;
 
-            allPoints.push([
-              recTime,
-              temp,
-              hum,
-              pres
-            ]);
+              const recTime = new Date(baseTime + r * intervalMs);
+              const tsMs = recTime.getTime();
+              const temp = view.getFloat32(offset + 4, true);
+              const hum = view.getFloat32(offset + 8, true);
+              const pres = view.getFloat32(offset + 12, true);
+
+              cachedHistoryMap.set(tsMs, {
+                date: recTime,
+                temp: temp,
+                hum: hum,
+                pres: pres
+              });
+            }
+            fetchedChunkKeys.add(k);
+            await new Promise(resolve => setTimeout(resolve, 30));
           }
-          await new Promise(resolve => setTimeout(resolve, 50));
         }
 
-        updateModalProgress(90, 'Preparing chart dataset...');
+        updateModalProgress(95, 'Rendering chart...');
+
+        const startMs = startDate.getTime();
+        const endMs = endDate.getTime();
+        const allPoints = [];
+
+        for (const [ts, pt] of cachedHistoryMap.entries()) {
+          if (ts >= startMs && ts <= endMs) {
+            allPoints.push(pt);
+          }
+        }
+
+        allPoints.sort((a, b) => a.date.getTime() - b.date.getTime());
 
         historyLoaded = true;
         historyDataset = allPoints;
@@ -2041,44 +2067,97 @@ void WebManager::handleRoot() {
         }
 
         if (allPoints.length > 0) {
+          let tMin = Infinity, tMax = -Infinity;
+          let hMin = Infinity, hMax = -Infinity;
+          let pMin = Infinity, pMax = -Infinity;
+
+          allPoints.forEach(p => {
+            if (p.temp < tMin) tMin = p.temp;
+            if (p.temp > tMax) tMax = p.temp;
+            if (p.hum < hMin) hMin = p.hum;
+            if (p.hum > hMax) hMax = p.hum;
+            if (p.pres < pMin) pMin = p.pres;
+            if (p.pres > pMax) pMax = p.pres;
+          });
+
+          const getPaddedBounds = (min, max) => {
+            let range = max - min;
+            if (range <= 0) range = 1.0;
+            return [min - range * 0.05, max + range * 0.05];
+          };
+
+          const [tMinP, tMaxP] = getPaddedBounds(tMin, tMax);
+          const [hMinP, hMaxP] = getPaddedBounds(hMin, hMax);
+          const [pMinP, pMaxP] = getPaddedBounds(pMin, pMax);
+
+          const dyData = allPoints.map(p => [
+            p.date,
+            ((p.temp - tMinP) / (tMaxP - tMinP)) * 100,
+            ((p.hum - hMinP) / (hMaxP - hMinP)) * 100,
+            ((p.pres - pMinP) / (pMaxP - pMinP)) * 100
+          ]);
+
           dygraphInstance = new Dygraph(
             document.getElementById("chart"),
-            allPoints,
+            dyData,
             {
               labels: [ "Time", "Temperature", "Humidity", "Pressure" ],
               colors: [ "#f43f5e", "#06b6d4", "#10b981" ],
               strokeWidth: 2,
               gridLineColor: "rgba(255, 255, 255, 0.05)",
               axisLineColor: "rgba(255, 255, 255, 0.1)",
-              visibility: [
-                $('chkTemp').checked,
-                $('chkHum').checked,
-                $('chkPres').checked
-              ],
+              labelsDiv: "historyLegend",
+              legend: "always",
               series: {
-                "Temperature": {
-                  axis: 'y'
-                },
-                "Humidity": {
-                  axis: 'y2'
-                },
-                "Pressure": {
-                  axis: 'y2'
-                }
+                "Temperature": { axis: 'y' },
+                "Humidity": { axis: 'y2' },
+                "Pressure": { axis: 'y' }
               },
               axes: {
                 y: {
                   axisLabelColor: '#f43f5e',
-                  valueRange: [null, null]
+                  valueRange: [0, 100],
+                  axisLabelFormatter: function(y) {
+                    const realT = tMinP + (y / 100) * (tMaxP - tMinP);
+                    return realT.toFixed(1) + '°C';
+                  }
                 },
                 y2: {
                   axisLabelColor: '#06b6d4',
-                  valueRange: [null, null]
+                  valueRange: [0, 100],
+                  axisLabelFormatter: function(y) {
+                    const realH = hMinP + (y / 100) * (hMaxP - hMinP);
+                    return Math.round(realH) + '%';
+                  }
                 }
+              },
+              legendFormatter: function(data) {
+                if (!data.x) {
+                  if (allPoints.length === 0) return '';
+                  const last = allPoints[allPoints.length - 1];
+                  return `<div style="color:var(--text-sub); font-weight:500; margin-right:8px;">Latest:</div>` +
+                    `<div style="color:#f43f5e; font-weight:600;">Temp: ${last.temp.toFixed(2)} °C</div>` +
+                    `<div style="color:#06b6d4; font-weight:600;">Hum: ${last.hum.toFixed(2)} %</div>` +
+                    `<div style="color:#10b981; font-weight:600;">Pres: ${last.pres.toFixed(1)} hPa</div>`;
+                }
+                const pt = allPoints.find(p => p.date.getTime() === data.x);
+                const timeStr = data.xHTML;
+                let html = `<div style="color:var(--text-sub); font-weight:500; margin-right:8px;">${timeStr}</div>`;
+                data.series.forEach(s => {
+                  if (!s.isVisible) return;
+                  let valStr = '--';
+                  if (pt) {
+                    if (s.label === 'Temperature') valStr = pt.temp.toFixed(2) + ' °C';
+                    else if (s.label === 'Humidity') valStr = pt.hum.toFixed(2) + ' %';
+                    else if (s.label === 'Pressure') valStr = pt.pres.toFixed(1) + ' hPa';
+                  }
+                  html += `<div style="color:${s.color}; font-weight:600;">${s.label}: ${valStr}</div>`;
+                });
+                return html;
               }
             }
           );
-          setText('historyMeta', 'Total Logged: ' + allPoints.length);
+          setText('historyMeta', 'Total Points: ' + allPoints.length + ' (Cached Chunks: ' + fetchedChunkKeys.size + ')');
         } else {
           document.getElementById("chart").innerHTML = `<div style="color: var(--text-sub); text-align: center; line-height: 300px;">No data in this range.</div>`;
           setText('historyMeta', 'No data loaded.');
@@ -2098,16 +2177,6 @@ void WebManager::handleRoot() {
         setTimeout(() => {
           isLoadingHistory = false;
         }, 100);
-      }
-    }
-
-    function updateVisibility() {
-      if (dygraphInstance) {
-        dygraphInstance.setVisibility([
-          $('chkTemp').checked,
-          $('chkHum').checked,
-          $('chkPres').checked
-        ]);
       }
     }
 
@@ -2173,6 +2242,8 @@ void WebManager::handleRoot() {
               strokeWidth: 2,
               gridLineColor: "rgba(255, 255, 255, 0.05)",
               axisLineColor: "rgba(255, 255, 255, 0.1)",
+              labelsDiv: "batChartLegend",
+              legend: "always",
               series: {
                 "Capacity": {
                   axis: 'y2'
@@ -2187,6 +2258,29 @@ void WebManager::handleRoot() {
                   axisLabelColor: '#a855f7',
                   valueRange: [0, 100]
                 }
+              },
+              legendFormatter: function(data) {
+                if (!data.x) {
+                  if (dataset.length === 0) return '';
+                  const last = dataset[dataset.length - 1];
+                  return `<div style="color:var(--text-sub); font-weight:500; margin-right:8px;">Latest:</div>` +
+                    `<div style="color:#fbbf24; font-weight:600;">Voltage: ${last.v.toFixed(3)} V</div>` +
+                    `<div style="color:#a855f7; font-weight:600;">Capacity: ${last.p} %</div>` +
+                    `<div style="color:var(--text-sub); font-weight:500;">(${last.s})</div>`;
+                }
+                const pt = dataset.find(p => (p.ts * 1000) === data.x);
+                const timeStr = data.xHTML;
+                let html = `<div style="color:var(--text-sub); font-weight:500; margin-right:8px;">${timeStr}</div>`;
+                data.series.forEach(s => {
+                  if (!s.isVisible) return;
+                  let valStr = '--';
+                  if (pt) {
+                    if (s.label === 'Voltage') valStr = pt.v.toFixed(3) + ' V';
+                    else if (s.label === 'Capacity') valStr = pt.p + ' %';
+                  }
+                  html += `<div style="color:${s.color}; font-weight:600;">${s.label}: ${valStr}</div>`;
+                });
+                return html;
               }
             }
           );
@@ -2252,14 +2346,16 @@ void WebManager::handleRoot() {
       document.body.removeChild(link);
     }
 
-    function onRangeChanged() {
-      const custom = $('range').value === 'custom';
-      $('customRangeGroup').style.display = custom ? 'grid' : 'none';
-      if (custom) {
+    function onRangeModeChanged() {
+      const mode = $('rangeMode').value;
+      $('hoursGroup').style.display = (mode === 'hours') ? 'block' : 'none';
+      $('customRangeGroup').style.display = (mode === 'custom') ? 'grid' : 'none';
+      if (mode === 'custom') {
         const now = new Date();
-        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+        const hrsPast = parseInt($('hoursPast').value) || 3;
+        const start = new Date(now.getTime() - hrsPast * 60 * 60 * 1000);
         if (!$('start').value) {
-          $('start').value = new Date(oneHourAgo.getTime() - oneHourAgo.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+          $('start').value = new Date(start.getTime() - start.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
         }
         if (!$('end').value) {
           $('end').value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -2268,7 +2364,7 @@ void WebManager::handleRoot() {
     }
 
     window.addEventListener('load', async () => {
-      onRangeChanged();
+      onRangeModeChanged();
       await loadConfig();
       await loadSdTree();
       await loadLive();
@@ -2958,10 +3054,31 @@ void WebManager::handleLogDownload() {
   int lastSlash = path.lastIndexOf('/');
   String filename = (lastSlash >= 0) ? path.substring(lastSlash + 1) : path;
 
+  const size_t fileSize = file.size();
+  server_.setContentLength(fileSize);
+  server_.sendHeader("Content-Type", contentType);
   server_.sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
-  server_.sendHeader("Connection", "close");
+  server_.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server_.send(200, contentType, "");
 
-  server_.streamFile(file, contentType);
+  WiFiClient client = server_.client();
+  uint8_t buf[256];
+  size_t bytesSent = 0;
+  while (file.available() && bytesSent < fileSize) {
+    size_t toRead = sizeof(buf);
+    if (fileSize - bytesSent < toRead) {
+      toRead = fileSize - bytesSent;
+    }
+    int n = file.read(buf, toRead);
+    if (n <= 0) break;
+    client.write(buf, n);
+    bytesSent += n;
+    if (yieldCallback_) {
+      yieldCallback_(yieldCallbackArg_);
+    } else {
+      yield();
+    }
+  }
   file.close();
 }
 
