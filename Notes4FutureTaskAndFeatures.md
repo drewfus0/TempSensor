@@ -22,7 +22,7 @@ display move the battery % to the 4th line with state reporting
 Improvements/tweaks:
  - Data download to chunk in smaller pieces.
  - Web page knows what it has and only download what is missing. 
- - 
+ - Custom Sensor Events & Hardware Buttons A/B (See Notes_CustomEventsPlan.md)
 
 
 # Completed Milestones
