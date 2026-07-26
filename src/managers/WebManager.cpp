@@ -1297,7 +1297,7 @@ void WebManager::handleRoot() {
         }
       }
       
-      schedulerTimer = setInterval(schedulerTick, 10000);
+      schedulerTimer = setInterval(schedulerTick, 5000);
     }
 
     function setRefreshButtonsState(disabled, spinningBtn = null) {
