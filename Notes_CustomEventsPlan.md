@@ -1,8 +1,35 @@
-# Feature Plan: Custom Sensor Events & Hardware Button Integration
+# Feature Plan: Custom Sensor Events & Preallocated Rolling Event Storage
 
 > Saved for future milestone / implementation.
 
-Implement a complete custom event tracking system for sensor data. This includes hardware button triggers (Buttons A & B on the LOLIN OLED Shield v2.0.0), web interface controls to log custom events (with backdating support), live editing/renaming of existing events, and vertical line annotations with labels overlaid directly on the sensor history graph.
+Implement a complete custom event tracking system for sensor data with high-performance preallocated binary event storage. This includes hardware button triggers (Buttons A & B on the LOLIN OLED Shield v2.0.0), web interface controls to log custom events (with backdating support), live editing/renaming of existing events, and vertical line annotations with labels overlaid directly on the sensor history graph.
+
+---
+
+## Preallocated Binary Event Storage Architecture
+
+- **Fixed Packed Record (`EventRecord` - 136 bytes):**
+  ```cpp
+  struct __attribute__((packed)) EventRecord {
+    uint32_t epochTime;     // 4 bytes: Unix timestamp (seconds since 1970)
+    uint8_t  quality;       // 1 byte: 0 = NTP, 1 = Estimated
+    uint8_t  category;      // 1 byte: 0 = System, 1 = Custom Web, 2 = Button A, 3 = Button B
+    char     message[128];  // 128 bytes: Null-terminated UTF-8 event text
+    uint8_t  reserved[2];   // 2 bytes: Alignment padding to 136 bytes (multiple of 4)
+  };
+  ```
+
+- **File Naming & Rollover Scheme (`YYYYMMDD` formatted creation date):**
+  - **Path Format:** `/logs/events/ev_YYYYMMDD_XXX.bin` (e.g., `/logs/events/ev_20260726_001.bin`)
+  - **Capacity:** Each chunk file is preallocated for **1,000 events** ($1,000 \times 136\text{ B} = \mathbf{136\text{ KB}}$ per file).
+  - **Creation & Rollover:** When a file reaches 1,000 events, a new preallocated chunk file is generated using the current creation date `YYYYMMDD` and incremental sequence counter (e.g., `/logs/events/ev_20261015_002.bin`).
+  - **Indefinite Retention:** Event files remain stored on the SD card indefinitely across chunks.
+
+- **In-Place Editing / Renaming ($O(1)$ Direct Overwrite):**
+  - Renaming or editing an event does not require full file rewrites. The system seeks directly to `slotIndex * sizeof(EventRecord)` and overwrites the 136-byte record in-place.
+
+- **Legacy Migration:**
+  - On first boot with new binary logger, existing `/logs/events.csv` lines are migrated into `/logs/events/ev_YYYYMMDD_001.bin` and the old CSV is renamed to `events.csv.bak`.
 
 ---
 
@@ -23,31 +50,28 @@ Implement a complete custom event tracking system for sensor data. This includes
 
 - **[AppCoordinator.cpp](file:///home/drewfus/TempSensor/src/app/AppCoordinator.cpp):**
   - Implement `handleButtons(uint32_t nowMs)` with debouncing and falling edge detection.
-  - Button A press logs event `"A"` (or `"Button A"`) to `/logs/events.csv`.
-  - Button B press logs event `"B"` (or `"Button B"`) to `/logs/events.csv`.
-  - Optional brief OLED toast feedback when pressed (`Event 'A' Logged!`).
+  - Button A press logs event `"A"` (or `"Button A"`) category 2.
+  - Button B press logs event `"B"` (or `"Button B"`) category 3.
+  - Brief OLED toast feedback when pressed (`Event 'A' Logged!`).
 
 ---
 
-## Backend Storage & Web APIs
-
-- **Data Format:**
-  - Uses existing `/logs/events.csv` structure (`timestamp,quality,eventName`). No breaking schema changes.
+## Backend APIs & Data Management
 
 - **[LoggerManager.cpp](file:///home/drewfus/TempSensor/src/managers/LoggerManager.cpp):**
-  - Add `updateEvent(oldTs, oldName, newTs, newName)` method to rewrite/update targeted event lines in `/logs/events.csv` safely using a temp file transaction (`/logs/events.tmp`).
+  - Implement binary event chunk manager (`logEvent`, `updateEventRecord`, `initEventStorage`).
 
 - **[WebManager.cpp](file:///home/drewfus/TempSensor/src/managers/WebManager.cpp):**
   - `POST /api/events/create`: Accepts `{ "event": "Custom Event Name", "ts": "YYYY-MM-DD HH:MM:SS", "q": "ntp" }`. Supports backdated timestamps.
-  - `POST /api/events/update`: Accepts `{ "oldTs": "...", "oldEvent": "...", "newTs": "...", "newEvent": "..." }`. Renames or modifies event timestamp/name.
-  - `GET /api/events`: Add `start` and `end` filtering parameters.
+  - `POST /api/events/update`: Accepts `{ "file": "ev_20260726_001.bin", "index": 42, "event": "Updated Name" }`.
+  - `GET /api/events`: Efficient binary streaming of requested event ranges or latest $N$ events across active chunk files.
 
 ---
 
 ## Web Dashboard & Dygraphs History Chart Overlay
 
 - **Event Creation Form:**
-  - Add a form to the Event Timeline card with Event Name input, Datetime-Local picker (defaulting to current time), and "Add Event" button.
+  - Add a form to the Event Timeline card with Event Name input (max 128 chars), Datetime-Local picker (defaulting to current time), and "Add Event" button.
 
 - **Timeline Item Editing:**
   - Add an inline **Edit / Rename** button next to items in `#eventsTimeline` to edit event names or timestamps live.
@@ -61,7 +85,7 @@ Implement a complete custom event tracking system for sensor data. This includes
 ---
 
 ## Verification Steps
-1. **OLED Buttons:** Press A & B on shield; confirm Serial log, OLED feedback toast, and CSV append.
-2. **Web Creation & Backdating:** Create current and backdated events via web form; verify timeline and CSV log.
+1. **OLED Buttons:** Press A & B on shield; confirm Serial log, OLED feedback toast, and binary event record write.
+2. **Web Creation & Backdating:** Create current and backdated events via web form; verify timeline and binary log file.
 3. **Chart Annotations:** Load history graph; confirm vertical dashed lines and labels render over sensor data.
-4. **Edit & Rename:** Click edit on an event, rename it, and verify backend CSV update and live chart label refresh.
+4. **Edit & Rename:** Click edit on an event, rename it, and verify in-place binary record overwrite and live chart label refresh.

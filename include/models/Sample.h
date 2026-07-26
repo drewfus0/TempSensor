@@ -36,6 +36,14 @@ struct __attribute__((packed)) BatteryRecord {
   int32_t timeRemainingS;
 };
 
+struct __attribute__((packed)) EventRecord {
+  uint32_t epochTime;   // Unix timestamp (seconds)
+  uint8_t quality;      // 0 = NTP, 1 = Estimated, 2 = Empty/Invalid
+  uint8_t category;     // 0 = System, 1 = Custom Web, 2 = Button A, 3 = Button B
+  char message[128];    // Null-terminated UTF-8 text (128 chars)
+  uint8_t reserved[2];  // Alignment padding to 136 bytes total
+};
+
 inline uint8_t BatteryStatusToState(const char* status) {
   if (strcmp(status, "Discharging") == 0) return 1;
   if (strcmp(status, "Charging / USB") == 0) return 2;

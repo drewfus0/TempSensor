@@ -55,7 +55,8 @@ class WebManager {
   bool isTimestampInRange(const String& ts, const String& startTs, const String& endTs) const;
   bool parseHistoryValue(const String& line, const String& metric, String& outTs, String& outQuality, float& outValue) const;
   bool parseEventRow(const String& line, String& outTs, String& outQuality, String& outEvent) const;
-  void streamEventsJson(File& file, const String& startTs, const String& endTs, uint32_t limit);
+  void streamEventsBinary(uint32_t limit);
+  void streamEventsJson(const String& startTs, const String& endTs, uint32_t limit);
 
   ESP8266WebServer server_{80};
   const Sample* latestSample_ = nullptr;

@@ -29,6 +29,7 @@ bool LoggerManager::begin(int sdCsPin, int sckPin, int misoPin, int mosiPin) {
   }
 
   initBatteryLogFile();
+  initEventStorage();
 
   return true;
 }
@@ -236,30 +237,95 @@ bool LoggerManager::flush() {
   return allWritten;
 }
 
-bool LoggerManager::logEvent(const char* eventName, const char* timestamp, TimestampQuality quality) {
+static time_t parseTimestampToEpoch(const char* ts) {
+  if (!ts || strlen(ts) < 19) return time(nullptr);
+  struct tm tmStruct;
+  memset(&tmStruct, 0, sizeof(tmStruct));
+  if (sscanf(ts, "%d-%d-%d %d:%d:%d",
+             &tmStruct.tm_year, &tmStruct.tm_mon, &tmStruct.tm_mday,
+             &tmStruct.tm_hour, &tmStruct.tm_min, &tmStruct.tm_sec) == 6) {
+    tmStruct.tm_year -= 1900;
+    tmStruct.tm_mon -= 1;
+    time_t t = mktime(&tmStruct);
+    if (t != (time_t)-1) return t;
+  }
+  return time(nullptr);
+}
+
+static void formatDateYYYYMMDD(time_t epoch, char* buf, size_t len) {
+  if (epoch <= 0) epoch = time(nullptr);
+  struct tm* timeinfo = localtime(&epoch);
+  if (timeinfo && timeinfo->tm_year > 70) {
+    snprintf(buf, len, "%04u%02u%02u",
+             (unsigned)(timeinfo->tm_year + 1900),
+             (unsigned)(timeinfo->tm_mon + 1),
+             (unsigned)(timeinfo->tm_mday));
+  } else {
+    snprintf(buf, len, "20260101");
+  }
+}
+
+bool LoggerManager::logEvent(const char* eventName, const char* timestamp, TimestampQuality quality, uint8_t category) {
+  time_t epoch = parseTimestampToEpoch(timestamp);
+  return logEvent(eventName, epoch, quality, category);
+}
+
+bool LoggerManager::logEvent(const char* eventName, time_t epochTime, TimestampQuality quality, uint8_t category) {
   if (!sdHealthy_) {
-    Serial.printf("[Event] %s at %s (%s)\n", eventName, timestamp, TimestampQualityToString(quality));
+    Serial.printf("[Event] %s (cat %u) at %ld (%s)\n", eventName, category, (long)epochTime, TimestampQualityToString(quality));
     return false;
   }
 
-  File file = SD.open(AppConfig::EVENT_FILE_PATH, "a");
+  char filePath[64]{};
+  size_t slotIndex = 0;
+  if (!getActiveEventChunkPath(filePath, sizeof(filePath), slotIndex, epochTime)) {
+    Serial.println("[Logger] Failed to resolve active event chunk file");
+    return false;
+  }
+
+  File file = SD.open(filePath, "r+");
   if (!file) {
     sdHealthy_ = false;
-    Serial.println("[Logger] Failed to append event log");
+    Serial.printf("[Logger] Failed to open event chunk %s for writing\n", filePath);
     return false;
   }
 
-  const int written = file.printf("%s,%s,%s\n", timestamp, TimestampQualityToString(quality), eventName);
+  EventRecord record;
+  memset(&record, 0, sizeof(EventRecord));
+  record.epochTime = static_cast<uint32_t>(epochTime);
+  record.quality = static_cast<uint8_t>(quality);
+  record.category = category;
+  if (eventName) {
+    strncpy(record.message, eventName, sizeof(record.message) - 1);
+  }
+  record.message[sizeof(record.message) - 1] = '\0';
+
+  uint32_t byteOffset = slotIndex * sizeof(EventRecord);
+  file.seek(byteOffset);
+  size_t written = file.write(reinterpret_cast<const uint8_t*>(&record), sizeof(EventRecord));
   file.flush();
   file.close();
 
-  if (written <= 0) {
+  if (written < sizeof(EventRecord)) {
     sdHealthy_ = false;
-    Serial.println("[Logger] Event write failed");
+    Serial.println("[Logger] Event record write failed");
     return false;
   }
 
+  Serial.printf("[Event] Logged '%s' to %s [slot %u]\n", record.message, filePath, (unsigned)slotIndex);
   return true;
+}
+
+bool LoggerManager::updateEventRecord(const char* filepath, size_t slotIndex, const EventRecord& record) {
+  if (!sdHealthy_) return false;
+  File file = SD.open(filepath, "r+");
+  if (!file) return false;
+  uint32_t byteOffset = slotIndex * sizeof(EventRecord);
+  file.seek(byteOffset);
+  size_t written = file.write(reinterpret_cast<const uint8_t*>(&record), sizeof(EventRecord));
+  file.flush();
+  file.close();
+  return written == sizeof(EventRecord);
 }
 
 bool LoggerManager::initSdWithRetries(int sdCsPin) {
@@ -308,7 +374,183 @@ bool LoggerManager::ensurePathsAndHeaders() {
     Serial.println("[Logger] Failed to create /logs directory");
     return false;
   }
+  ensureDir(AppConfig::EVENT_DIR_PATH);
   return writeEventHeaderIfMissing();
+}
+
+void LoggerManager::initEventStorage() {
+  if (!ensureDir(AppConfig::EVENT_DIR_PATH)) {
+    Serial.println("[Logger] Failed to create /logs/events directory");
+    return;
+  }
+
+  File dir = SD.open(AppConfig::EVENT_DIR_PATH);
+  bool hasBinFiles = false;
+  if (dir && dir.isDirectory()) {
+    File entry = dir.openNextFile();
+    while (entry) {
+      if (!entry.isDirectory()) {
+        String name = String(entry.name());
+        if (name.endsWith(".bin")) {
+          hasBinFiles = true;
+          entry.close();
+          break;
+        }
+      }
+      entry.close();
+      entry = dir.openNextFile();
+    }
+    dir.close();
+  }
+
+  if (!hasBinFiles && SD.exists(AppConfig::EVENT_FILE_PATH)) {
+    Serial.println("[Logger] Migrating legacy /logs/events.csv to binary chunk storage...");
+    migrateLegacyEventsCsv();
+  }
+
+  char activePath[64]{};
+  size_t slotIdx = 0;
+  getActiveEventChunkPath(activePath, sizeof(activePath), slotIdx, time(nullptr));
+}
+
+bool LoggerManager::preallocateEventChunk(const char* filepath) {
+  Serial.printf("[Logger] Pre-allocating binary event chunk %s (1000 records / 136KB)...\n", filepath);
+  File file = SD.open(filepath, "w");
+  if (!file) {
+    Serial.printf("[Logger] Failed to create event chunk file: %s\n", filepath);
+    return false;
+  }
+
+  EventRecord emptyRecord;
+  memset(&emptyRecord, 0, sizeof(EventRecord));
+  emptyRecord.quality = 2; // Invalid / Empty slot
+
+  uint8_t buffer[2720]; // 20 records at a time
+  for (int i = 0; i < 20; ++i) {
+    memcpy(buffer + i * sizeof(EventRecord), &emptyRecord, sizeof(EventRecord));
+  }
+
+  for (size_t i = 0; i < AppConfig::EVENT_RECORDS_PER_FILE; i += 20) {
+    size_t written = file.write(buffer, sizeof(buffer));
+    if (written < sizeof(buffer)) {
+      file.close();
+      Serial.printf("[Logger] Error writing preallocated event buffer to %s\n", filepath);
+      return false;
+    }
+    yield();
+  }
+
+  file.flush();
+  file.close();
+  Serial.printf("[Logger] Preallocated event chunk %s ready\n", filepath);
+  return true;
+}
+
+bool LoggerManager::getActiveEventChunkPath(char* outPath, size_t maxPathLen, size_t& outSlotIndex, time_t currentEpoch) {
+  File dir = SD.open(AppConfig::EVENT_DIR_PATH);
+  if (!dir || !dir.isDirectory()) {
+    ensureDir(AppConfig::EVENT_DIR_PATH);
+    dir = SD.open(AppConfig::EVENT_DIR_PATH);
+    if (!dir) return false;
+  }
+
+  String highestFileName = "";
+  uint32_t highestSeq = 0;
+
+  File entry = dir.openNextFile();
+  while (entry) {
+    if (!entry.isDirectory()) {
+      String name = String(entry.name());
+      if (name.startsWith("ev_") && name.endsWith(".bin")) {
+        int underscoreIdx = name.lastIndexOf('_');
+        if (underscoreIdx > 3) {
+          String seqStr = name.substring(underscoreIdx + 1, name.length() - 4);
+          uint32_t seq = seqStr.toInt();
+          if (seq >= highestSeq) {
+            highestSeq = seq;
+            highestFileName = name;
+          }
+        }
+      }
+    }
+    entry.close();
+    entry = dir.openNextFile();
+  }
+  dir.close();
+
+  char dateStr[16]{};
+  formatDateYYYYMMDD(currentEpoch, dateStr, sizeof(dateStr));
+
+  if (highestFileName.length() == 0) {
+    snprintf(outPath, maxPathLen, "%s/ev_%s_001.bin", AppConfig::EVENT_DIR_PATH, dateStr);
+    if (!preallocateEventChunk(outPath)) {
+      return false;
+    }
+    outSlotIndex = 0;
+    return true;
+  }
+
+  snprintf(outPath, maxPathLen, "%s/%s", AppConfig::EVENT_DIR_PATH, highestFileName.c_str());
+  File file = SD.open(outPath, "r");
+  if (!file) {
+    return false;
+  }
+
+  size_t foundSlot = AppConfig::EVENT_RECORDS_PER_FILE;
+  EventRecord rec;
+  for (size_t s = 0; s < AppConfig::EVENT_RECORDS_PER_FILE; ++s) {
+    if (file.read(reinterpret_cast<uint8_t*>(&rec), sizeof(EventRecord)) == sizeof(EventRecord)) {
+      if (rec.quality == 2 || rec.epochTime == 0) {
+        foundSlot = s;
+        break;
+      }
+    } else {
+      foundSlot = s;
+      break;
+    }
+  }
+  file.close();
+
+  if (foundSlot < AppConfig::EVENT_RECORDS_PER_FILE) {
+    outSlotIndex = foundSlot;
+    return true;
+  }
+
+  uint32_t nextSeq = highestSeq + 1;
+  snprintf(outPath, maxPathLen, "%s/ev_%s_%03u.bin", AppConfig::EVENT_DIR_PATH, dateStr, (unsigned)nextSeq);
+  if (!preallocateEventChunk(outPath)) {
+    return false;
+  }
+  outSlotIndex = 0;
+  return true;
+}
+
+void LoggerManager::migrateLegacyEventsCsv() {
+  File csv = SD.open(AppConfig::EVENT_FILE_PATH, "r");
+  if (!csv) return;
+
+  uint32_t count = 0;
+  while (csv.available()) {
+    String line = csv.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0 || line.startsWith("timestamp,")) continue;
+
+    int comma1 = line.indexOf(',');
+    int comma2 = line.indexOf(',', comma1 + 1);
+    if (comma1 > 0 && comma2 > comma1) {
+      String tsStr = line.substring(0, comma1);
+      String qStr = line.substring(comma1 + 1, comma2);
+      String eventStr = line.substring(comma2 + 1);
+
+      TimestampQuality quality = (qStr == "ntp") ? TimestampQuality::Ntp : TimestampQuality::Estimated;
+      time_t epoch = parseTimestampToEpoch(tsStr.c_str());
+      logEvent(eventStr.c_str(), epoch, quality, 0);
+      count++;
+    }
+  }
+  csv.close();
+  Serial.printf("[Logger] Migrated %u legacy events from CSV\n", count);
+  SD.rename(AppConfig::EVENT_FILE_PATH, "/logs/events.csv.bak");
 }
 
 bool LoggerManager::ensureDir(const char* path) {

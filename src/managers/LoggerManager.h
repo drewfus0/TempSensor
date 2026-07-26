@@ -16,7 +16,9 @@ class LoggerManager {
   bool enqueueSample(const Sample& sample);
   bool flush();
   bool flushIfDue(uint32_t nowMs, uint32_t flushIntervalMs);
-  bool logEvent(const char* eventName, const char* timestamp, TimestampQuality quality);
+  bool logEvent(const char* eventName, const char* timestamp, TimestampQuality quality, uint8_t category = 0);
+  bool logEvent(const char* eventName, time_t epochTime, TimestampQuality quality, uint8_t category = 0);
+  bool updateEventRecord(const char* filepath, size_t slotIndex, const EventRecord& record);
   bool logBattery(time_t epochTime, float voltage, int percent, const char* status, int32_t timeRemainingS);
   bool calibrateEstimatedLogs(time_t bootEpoch);
   bool saveDeviceConfig(const DeviceConfig& config);
@@ -44,6 +46,10 @@ class LoggerManager {
   bool writeEventHeaderIfMissing();
   void calibrateCsvFile(const char* filepath, time_t bootEpoch);
   void initBatteryLogFile();
+  void initEventStorage();
+  bool getActiveEventChunkPath(char* outPath, size_t maxPathLen, size_t& outSlotIndex, time_t currentEpoch);
+  bool preallocateEventChunk(const char* filepath);
+  void migrateLegacyEventsCsv();
   size_t batteryWriteIndex_ = 0;
 
   RingBuffer<Sample, AppConfig::MAX_LOG_QUEUE_SIZE> queue_;

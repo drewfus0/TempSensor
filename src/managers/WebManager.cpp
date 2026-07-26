@@ -3,6 +3,8 @@
 #include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
 #include <stdlib.h>
+#include <vector>
+#include <algorithm>
 
 #include "config/AppConfig.h"
 #include "managers/LoggerManager.h"
@@ -1495,9 +1497,40 @@ void WebManager::handleRoot() {
     async function loadEvents() {
       if (isLoadingHistory) return;
       try {
-        const data = await fetchJson('/api/events?limit=30');
+        const res = await fetch('/api/events?limit=30', { cache: 'no-store' });
         const timeline = $('eventsTimeline');
-        const list = Array.isArray(data.events) ? data.events : [];
+        if (!res.ok) throw new Error('HTTP status ' + res.status);
+
+        const contentType = res.headers.get('content-type') || '';
+        let list = [];
+
+        if (contentType.indexOf('octet-stream') >= 0) {
+          const recordSize = parseInt(res.headers.get('X-Record-Size') || '136');
+          const arrayBuffer = await res.arrayBuffer();
+          const view = new DataView(arrayBuffer);
+          const decoder = new TextDecoder('utf-8');
+          const totalRecords = Math.floor(arrayBuffer.byteLength / recordSize);
+
+          for (let r = 0; r < totalRecords; r++) {
+            const offset = r * recordSize;
+            const epochTime = view.getUint32(offset, true);
+            const quality = view.getUint8(offset + 4);
+            const category = view.getUint8(offset + 5);
+            if (quality === 2 || epochTime === 0) continue;
+
+            const rawMsgBytes = new Uint8Array(arrayBuffer, offset + 6, 128);
+            let msgEnd = rawMsgBytes.indexOf(0);
+            if (msgEnd === -1) msgEnd = 128;
+            const message = decoder.decode(rawMsgBytes.subarray(0, msgEnd));
+
+            const dt = new Date(epochTime * 1000);
+            const timePart = fmtLocalTs(dt);
+            list.push({ ts: timePart, quality: quality === 0 ? 'ntp' : 'estimated', category, event: message });
+          }
+        } else {
+          const data = await res.json();
+          list = Array.isArray(data.events) ? data.events : [];
+        }
         
         if (list.length === 0) {
           timeline.innerHTML = '<div style="color: var(--text-sub); font-size:0.75rem;">No events logged.</div>';
@@ -2874,54 +2907,149 @@ void WebManager::handleLogRename() {
 
 
 
-void WebManager::streamEventsJson(File& file, const String& startTs, const String& endTs, uint32_t limit) {
-  server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server_.send(200, "application/json", "");
-
-  server_.sendContent("{\"events\":[");
-
-  uint32_t fileSize = file.size();
-  if (fileSize > 0) {
-    uint32_t pos = fileSize;
-    uint32_t newlineCount = 0;
-    while (pos > 0) {
-      pos--;
-      file.seek(pos);
-      char c = file.read();
-      if (c == '\n') {
-        newlineCount++;
-        if (newlineCount > limit) {
-          break;
-        }
-      }
-    }
-    if (pos == 0) {
-      file.seek(0);
-    }
+void WebManager::streamEventsBinary(uint32_t limit) {
+  if (!SD.exists(AppConfig::EVENT_DIR_PATH)) {
+    sendJsonError(404, "event directory not found");
+    return;
   }
 
-  uint32_t emitted = 0;
-  while (file.available()) {
-    const String line = file.readStringUntil('\n');
-    String ts;
-    String quality;
-    String eventName;
-    if (!parseEventRow(line, ts, quality, eventName)) {
-      continue;
-    }
-    if (!isTimestampInRange(ts, startTs, endTs)) {
-      continue;
-    }
+  File dir = SD.open(AppConfig::EVENT_DIR_PATH);
+  if (!dir || !dir.isDirectory()) {
+    sendJsonError(404, "event directory unavailable");
+    return;
+  }
 
-    if (emitted > 0) {
-      server_.sendContent(",");
+  std::vector<String> binFiles;
+  File entry = dir.openNextFile();
+  while (entry) {
+    if (!entry.isDirectory()) {
+      String name = String(entry.name());
+      if (name.startsWith("ev_") && name.endsWith(".bin")) {
+        binFiles.push_back(name);
+      }
     }
-    String item = "{\"ts\":\"" + ts + "\",\"q\":\"" + quality + "\",\"event\":\"" + eventName + "\"}";
-    server_.sendContent(item);
-    ++emitted;
-    
-    if (yieldCallback_) {
+    entry.close();
+    entry = dir.openNextFile();
+  }
+  dir.close();
+
+  std::sort(binFiles.begin(), binFiles.end());
+
+  std::vector<EventRecord> records;
+  for (int f = (int)binFiles.size() - 1; f >= 0 && records.size() < limit; f--) {
+    String filepath = String(AppConfig::EVENT_DIR_PATH) + "/" + binFiles[f];
+    File file = SD.open(filepath, "r");
+    if (!file) continue;
+
+    size_t totalRecords = file.size() / sizeof(EventRecord);
+    for (int r = (int)totalRecords - 1; r >= 0 && records.size() < limit; r--) {
+      file.seek(r * sizeof(EventRecord));
+      EventRecord rec;
+      if (file.read(reinterpret_cast<uint8_t*>(&rec), sizeof(EventRecord)) == sizeof(EventRecord)) {
+        if (rec.quality == 2 || rec.epochTime == 0) continue;
+        records.push_back(rec);
+      }
+      if (yieldCallback_) yieldCallback_(yieldCallbackArg_);
+    }
+    file.close();
+  }
+
+  std::reverse(records.begin(), records.end());
+
+  server_.sendHeader("X-Record-Size", String(sizeof(EventRecord)));
+  server_.setContentLength(records.size() * sizeof(EventRecord));
+  server_.send(200, "application/octet-stream", "");
+
+  for (size_t i = 0; i < records.size(); ++i) {
+    server_.client().write(reinterpret_cast<const uint8_t*>(&records[i]), sizeof(EventRecord));
+    if (i % 10 == 0 && yieldCallback_) {
       yieldCallback_(yieldCallbackArg_);
+    }
+  }
+}
+
+void WebManager::streamEventsJson(const String& startTs, const String& endTs, uint32_t limit) {
+  server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server_.send(200, "application/json", "");
+  server_.sendContent("{\"events\":[");
+
+  uint32_t emitted = 0;
+
+  if (SD.exists(AppConfig::EVENT_DIR_PATH)) {
+    File dir = SD.open(AppConfig::EVENT_DIR_PATH);
+    if (dir && dir.isDirectory()) {
+      std::vector<String> binFiles;
+      File entry = dir.openNextFile();
+      while (entry) {
+        if (!entry.isDirectory()) {
+          String name = String(entry.name());
+          if (name.startsWith("ev_") && name.endsWith(".bin")) {
+            binFiles.push_back(name);
+          }
+        }
+        entry.close();
+        entry = dir.openNextFile();
+      }
+      dir.close();
+
+      std::sort(binFiles.begin(), binFiles.end());
+
+      std::vector<String> items;
+      for (int f = (int)binFiles.size() - 1; f >= 0 && items.size() < limit; f--) {
+        String filepath = String(AppConfig::EVENT_DIR_PATH) + "/" + binFiles[f];
+        File file = SD.open(filepath, "r");
+        if (!file) continue;
+
+        size_t totalRecords = file.size() / sizeof(EventRecord);
+        for (int r = (int)totalRecords - 1; r >= 0 && items.size() < limit; r--) {
+          file.seek(r * sizeof(EventRecord));
+          EventRecord rec;
+          if (file.read(reinterpret_cast<uint8_t*>(&rec), sizeof(EventRecord)) == sizeof(EventRecord)) {
+            if (rec.quality == 2 || rec.epochTime == 0) continue;
+
+            char tsBuf[64]{};
+            time_t epoch = rec.epochTime;
+            struct tm* timeinfo = localtime(&epoch);
+            if (timeinfo && timeinfo->tm_year > 70) {
+              snprintf(tsBuf, sizeof(tsBuf), "%04u-%02u-%02u %02u:%02u:%02u",
+                       (unsigned)(timeinfo->tm_year + 1900), (unsigned)(timeinfo->tm_mon + 1), (unsigned)timeinfo->tm_mday,
+                       (unsigned)timeinfo->tm_hour, (unsigned)timeinfo->tm_min, (unsigned)timeinfo->tm_sec);
+            } else {
+              snprintf(tsBuf, sizeof(tsBuf), "2026-01-01 00:00:00");
+            }
+
+            String ts(tsBuf);
+            if (!isTimestampInRange(ts, startTs, endTs)) continue;
+
+            const char* qStr = (rec.quality == 0) ? "ntp" : "estimated";
+            String item = "{\"ts\":\"" + ts + "\",\"q\":\"" + String(qStr) + "\",\"cat\":" + String(rec.category) + ",\"event\":\"" + String(rec.message) + "\"}";
+            items.push_back(item);
+          }
+          if (yieldCallback_) yieldCallback_(yieldCallbackArg_);
+        }
+        file.close();
+      }
+
+      for (int i = (int)items.size() - 1; i >= 0; i--) {
+        if (emitted > 0) server_.sendContent(",");
+        server_.sendContent(items[i]);
+        emitted++;
+      }
+    }
+  } else if (SD.exists(AppConfig::EVENT_FILE_PATH)) {
+    File file = SD.open(AppConfig::EVENT_FILE_PATH, "r");
+    if (file) {
+      while (file.available()) {
+        const String line = file.readStringUntil('\n');
+        String ts, quality, eventName;
+        if (!parseEventRow(line, ts, quality, eventName)) continue;
+        if (!isTimestampInRange(ts, startTs, endTs)) continue;
+        if (emitted > 0) server_.sendContent(",");
+        String item = "{\"ts\":\"" + ts + "\",\"q\":\"" + quality + "\",\"event\":\"" + eventName + "\"}";
+        server_.sendContent(item);
+        emitted++;
+      }
+      file.close();
     }
   }
 
@@ -3073,16 +3201,14 @@ void WebManager::handleEventsJson() {
     return;
   }
 
-  File file = SD.open(AppConfig::EVENT_FILE_PATH, "r");
-  if (!file) {
-    sendJsonError(404, "event file not found");
-    return;
+  const String format = server_.arg("format");
+  if (format == "json" || !SD.exists(AppConfig::EVENT_DIR_PATH)) {
+    const String startTs = server_.arg("start");
+    const String endTs = server_.arg("end");
+    streamEventsJson(startTs, endTs, limit);
+  } else {
+    streamEventsBinary(limit);
   }
-
-  const String startTs = server_.arg("start");
-  const String endTs = server_.arg("end");
-  streamEventsJson(file, startTs, endTs, limit);
-  file.close();
 }
 
 void WebManager::handleLogsJson() {

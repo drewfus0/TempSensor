@@ -42,5 +42,7 @@ constexpr uint16_t DISPLAY_DIMENSION_PROBE_MS = 2500;
 
 constexpr char LOG_FILE_PATH[] = "/logs/data.csv";
 constexpr char EVENT_FILE_PATH[] = "/logs/events.csv";
+constexpr char EVENT_DIR_PATH[] = "/logs/events";
+constexpr size_t EVENT_RECORDS_PER_FILE = 1000;
 
 }  // namespace AppConfig
