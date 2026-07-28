@@ -36,10 +36,20 @@ struct __attribute__((packed)) BatteryRecord {
   int32_t timeRemainingS;
 };
 
+enum class EventCategory : uint8_t {
+  System = 0,
+  CustomWeb = 1,
+  ButtonA = 2,
+  ButtonB = 3,
+  SensorFault = 4,
+  NetworkSync = 5,
+  PowerBattery = 6
+};
+
 struct __attribute__((packed)) EventRecord {
   uint32_t epochTime;   // Unix timestamp (seconds)
   uint8_t quality;      // 0 = NTP, 1 = Estimated, 2 = Empty/Invalid
-  uint8_t category;     // 0 = System, 1 = Custom Web, 2 = Button A, 3 = Button B
+  uint8_t category;     // 0 = System, 1 = Custom Web, 2 = Button A, 3 = Button B, 4 = Fault, 5 = Sync, 6 = Power
   char message[128];    // Null-terminated UTF-8 text (128 chars)
   uint8_t reserved[2];  // Alignment padding to 136 bytes total
 };

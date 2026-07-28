@@ -181,7 +181,7 @@ void AppCoordinator::loop() {
 
       char eventBuf[128]{};
       snprintf(eventBuf, sizeof(eventBuf), "battery_rate_calibrated (%.0fs/1%% -> %.0fs/1%%, %.1fh full runtime)", prevRate, newRate, newRate / 36.0f);
-      loggerManager_.logEvent(eventBuf, ts, quality);
+      loggerManager_.logEvent(eventBuf, ts, quality, static_cast<uint8_t>(EventCategory::PowerBattery));
     }
   }
 
@@ -212,7 +212,7 @@ void AppCoordinator::handleSampling(uint32_t nowMs) {
     char ts[32]{};
     TimestampQuality quality = TimestampQuality::Estimated;
     timeManager_.getTimestamp(ts, sizeof(ts), quality);
-    loggerManager_.logEvent(faultMsgBuf, ts, quality, 0);
+    loggerManager_.logEvent(faultMsgBuf, ts, quality, static_cast<uint8_t>(EventCategory::SensorFault));
   }
 
   if (!readOk) {
@@ -223,7 +223,7 @@ void AppCoordinator::handleSampling(uint32_t nowMs) {
     char ts[32]{};
     TimestampQuality quality = TimestampQuality::Estimated;
     timeManager_.getTimestamp(ts, sizeof(ts), quality);
-    loggerManager_.logEvent(faultMsgBuf, ts, quality, 0);
+    loggerManager_.logEvent(faultMsgBuf, ts, quality, static_cast<uint8_t>(EventCategory::SensorFault));
   }
 
   TimestampQuality quality = TimestampQuality::Estimated;

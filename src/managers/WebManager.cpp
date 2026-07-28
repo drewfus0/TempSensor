@@ -994,6 +994,13 @@ void WebManager::handleRoot() {
           <form onsubmit='createCustomEvent(event)' style='display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; padding: 10px; background: rgba(0,0,0,0.2); border: 1px solid var(--card-border); border-radius: 6px;'>
             <div style='display: flex; gap: 6px;'>
               <input type='text' id='newEventMsg' placeholder='Event name (e.g. Watered Plants)' class='form-control' style='flex: 1;' required maxlength='128'>
+              <select id='newEventCat' class='form-control' style='padding: 4px 6px; font-size: 0.75rem; width: auto;'>
+                <option value='1' selected>Custom (Amber)</option>
+                <option value='4'>Fault (Red)</option>
+                <option value='5'>Sync (Green)</option>
+                <option value='6'>Power (Purple)</option>
+                <option value='0'>System (Gray)</option>
+              </select>
               <button type='submit' class='btn' style='padding: 6px 12px; font-size: 0.8rem;'>+ Add</button>
             </div>
             <div style='display: flex; align-items: center; gap: 6px;'>
@@ -1515,10 +1522,21 @@ void WebManager::handleRoot() {
 
     let lastLoadedEvents = [];
 
+    const EVENT_CATEGORIES = {
+      0: { name: 'System', code: 'SYS', color: '#9ca3af', bg: 'rgba(156,163,175,0.18)' },
+      1: { name: 'Custom', code: 'WEB', color: '#f59e0b', bg: 'rgba(245,158,11,0.18)' },
+      2: { name: 'Button A', code: 'BTN-A', color: '#f43f5e', bg: 'rgba(244,63,94,0.18)' },
+      3: { name: 'Button B', code: 'BTN-B', color: '#06b6d4', bg: 'rgba(6,182,212,0.18)' },
+      4: { name: 'Fault', code: 'FLT', color: '#ef4444', bg: 'rgba(239,68,68,0.18)' },
+      5: { name: 'Sync', code: 'NTP', color: '#10b981', bg: 'rgba(16,185,129,0.18)' },
+      6: { name: 'Power', code: 'PWR', color: '#a855f7', bg: 'rgba(168,85,247,0.18)' }
+    };
+
     async function createCustomEvent(e) {
       if (e) e.preventDefault();
       const msgInput = $('newEventMsg');
       const tsInput = $('newEventTs');
+      const catSelect = $('newEventCat');
       const msg = msgInput.value.trim();
       if (!msg) return;
 
@@ -1527,11 +1545,13 @@ void WebManager::handleRoot() {
         tsStr = tsInput.value.replace('T', ' ') + ':00';
       }
 
+      const catVal = parseInt(catSelect ? catSelect.value : '1');
+
       try {
         const res = await fetch('/api/events/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event: msg, ts: tsStr })
+          body: JSON.stringify({ event: msg, ts: tsStr, category: catVal })
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         msgInput.value = '';
@@ -1610,20 +1630,24 @@ void WebManager::handleRoot() {
         let html = '';
         for (const e of reversedList) {
           let severity = 'info';
+          const catInfo = EVENT_CATEGORIES[e.category] || EVENT_CATEGORIES[0];
           const evLower = e.event.toLowerCase();
-          if (evLower.indexOf('error') >= 0 || evLower.indexOf('fail') >= 0) {
+          if (e.category === 4 || evLower.indexOf('error') >= 0 || evLower.indexOf('fail') >= 0 || evLower.indexOf('fault') >= 0) {
             severity = 'error';
           } else if (evLower.indexOf('warn') >= 0) {
             severity = 'warning';
-          } else if (e.event === 'ntp_reestablished' || e.event === 'ntp_synced') {
+          } else if (e.category === 5 || e.event === 'ntp_reestablished' || e.event === 'ntp_synced') {
             severity = 'ntp_reestablished';
           }
           
           const timePart = e.ts;
           const safeMsg = e.event.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-          html += '<div class="timeline-item ' + severity + '" style="display:flex; justify-content:space-between; align-items:center;">';
+          html += '<div class="timeline-item ' + severity + '" style="display:flex; justify-content:space-between; align-items:center; border-left-color:' + catInfo.color + ';">';
           html += '  <div>';
-          html += '    <div class="timeline-time">' + timePart + '</div>';
+          html += '    <div class="timeline-time" style="display:flex; align-items:center; gap:6px;">';
+          html += `      <span style="padding: 1px 5px; border-radius: 4px; font-size: 0.65rem; font-weight: 600; background: ${catInfo.bg}; color: ${catInfo.color}; border: 1px solid ${catInfo.color};">${catInfo.name}</span>`;
+          html += '      <span>' + timePart + '</span>';
+          html += '    </div>';
           html += '    <div class="timeline-content">' + e.event + '</div>';
           html += '  </div>';
           html += `  <button onclick="editEventRecord('${timePart}', '${safeMsg}')" style="padding: 2px 6px; font-size: 0.7rem; background: rgba(255,255,255,0.08); border: 1px solid var(--card-border); color: var(--text); border-radius: 4px; cursor: pointer;">Edit</button>`;
@@ -2329,16 +2353,15 @@ void WebManager::handleRoot() {
                 if (!lastLoadedEvents || lastLoadedEvents.length === 0) return;
 
                 canvas.save();
-                canvas.font = '10px sans-serif';
                 for (let i = 0; i < lastLoadedEvents.length; i++) {
                   const ev = lastLoadedEvents[i];
                   const evMs = new Date(ev.ts.replace(' ', 'T')).getTime();
                   const x = g.toDomXCoord(evMs);
                   if (x >= area.x && x <= area.x + area.w) {
-                    let col = '#f59e0b';
-                    if (ev.category === 2 || ev.event === 'A') col = '#f43f5e';
-                    else if (ev.category === 3 || ev.event === 'B') col = '#06b6d4';
+                    const cat = EVENT_CATEGORIES[ev.category] || EVENT_CATEGORIES[0];
+                    const col = cat.color;
 
+                    // 1. Vertical dashed event line
                     canvas.strokeStyle = col;
                     canvas.setLineDash([4, 4]);
                     canvas.lineWidth = 1.5;
@@ -2347,12 +2370,26 @@ void WebManager::handleRoot() {
                     canvas.lineTo(x, area.y + area.h);
                     canvas.stroke();
 
+                    // 2. Rotated 90 degrees text label running vertically alongside the event line
+                    canvas.save();
+                    canvas.translate(x + 4, area.y + 8);
+                    canvas.rotate(Math.PI / 2); // 90 degree rotation
+
+                    let label = ev.event;
+                    if (label.length > 10) {
+                      label = label.substring(0, 8) + '..';
+                    }
+
+                    const badgeText = `[${cat.code}] ${label}`;
+                    canvas.font = 'bold 10px sans-serif';
+                    const txtWidth = canvas.measureText(badgeText).width;
+
                     canvas.setLineDash([]);
-                    const txtWidth = canvas.measureText(ev.event).width;
                     canvas.fillStyle = col;
-                    canvas.fillRect(x + 2, area.y + 4, txtWidth + 6, 14);
+                    canvas.fillRect(-2, -10, txtWidth + 6, 13);
                     canvas.fillStyle = '#ffffff';
-                    canvas.fillText(ev.event, x + 5, area.y + 15);
+                    canvas.fillText(badgeText, 1, 0);
+                    canvas.restore();
                   }
                 }
                 canvas.restore();
