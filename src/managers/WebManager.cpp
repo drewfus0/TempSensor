@@ -1940,6 +1940,20 @@ void WebManager::handleRoot() {
     $('btnSaveUiIntervals').addEventListener('click', saveUiIntervals);
     $('rangeMode').addEventListener('change', onRangeModeChanged);
 
+    const triggerLoadOnEnter = (e) => {
+      if (e.key === 'Enter' || e.keyCode === 13) {
+        e.preventDefault();
+        loadHistory();
+      }
+    };
+
+    ['hoursPast', 'start', 'end', 'binMode', 'rangeMode'].forEach(id => {
+      const el = $(id);
+      if (el) {
+        el.addEventListener('keydown', triggerLoadOnEnter);
+      }
+    });
+
     // OTA File Upload Handler
     const otaFile = $('otaFile');
     const otaDragDrop = $('otaDragDrop');
