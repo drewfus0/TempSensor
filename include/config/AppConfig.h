@@ -33,7 +33,9 @@ constexpr int SD_SCK_PIN = 14;   // D5
 constexpr int SD_MOSI_PIN = 13;  // D7
 constexpr int SD_MISO_PIN = 12;  // D6
 
-constexpr int BUTTON_PIN = 21;
+constexpr int BUTTON_A_PIN = 0; // D3 / GPIO0 (OLED Shield Button A)
+constexpr int BUTTON_B_PIN = 2; // D4 / GPIO2 (OLED Shield Button B)
+constexpr uint32_t BUTTON_DEBOUNCE_MS = 150;
 
 constexpr uint16_t DISPLAY_WIDTH = 64;
 constexpr uint16_t DISPLAY_HEIGHT = 48;

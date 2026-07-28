@@ -12,6 +12,9 @@ void AppCoordinator::begin() {
   digitalWrite(AppConfig::SD_CS_PIN, HIGH);
   delay(50); // Let power stabilize
 
+  pinMode(AppConfig::BUTTON_A_PIN, INPUT_PULLUP);
+  pinMode(AppConfig::BUTTON_B_PIN, INPUT_PULLUP);
+
   displayManager_.begin(AppConfig::I2C_SDA_PIN, AppConfig::I2C_SCL_PIN);
   displayManager_.showStartupStatus("Boot", "Initializing...");
 
@@ -126,6 +129,7 @@ void AppCoordinator::loop() {
   }
 
   handleSampling(nowMs);
+  handleButtons(nowMs);
   loggerManager_.flushIfDue(nowMs, config_.logFlushIntervalMs);
 
   // Handle runtime SD card recovery: auto-reload configuration from SD and apply to active managers
@@ -201,8 +205,25 @@ void AppCoordinator::handleSampling(uint32_t nowMs) {
   float humidityPct = 0.0f;
   float pressureHpa = 0.0f;
 
-  if (!sensorManager_.read(tempC, humidityPct, pressureHpa)) {
+  bool readOk = sensorManager_.read(tempC, humidityPct, pressureHpa);
+
+  char faultMsgBuf[128]{};
+  if (sensorManager_.checkAndClearFaultEvent(faultMsgBuf, sizeof(faultMsgBuf))) {
+    char ts[32]{};
+    TimestampQuality quality = TimestampQuality::Estimated;
+    timeManager_.getTimestamp(ts, sizeof(ts), quality);
+    loggerManager_.logEvent(faultMsgBuf, ts, quality, 0);
+  }
+
+  if (!readOk) {
     return;
+  }
+
+  if (sensorManager_.checkAndClearRecoveryEvent(faultMsgBuf, sizeof(faultMsgBuf))) {
+    char ts[32]{};
+    TimestampQuality quality = TimestampQuality::Estimated;
+    timeManager_.getTimestamp(ts, sizeof(ts), quality);
+    loggerManager_.logEvent(faultMsgBuf, ts, quality, 0);
   }
 
   TimestampQuality quality = TimestampQuality::Estimated;
@@ -218,6 +239,37 @@ void AppCoordinator::handleSampling(uint32_t nowMs) {
 
   latestSample_ = sample;
   hasSample_ = true;
+}
+
+void AppCoordinator::handleButtons(uint32_t nowMs) {
+  const bool currentStateA = digitalRead(AppConfig::BUTTON_A_PIN);
+  const bool currentStateB = digitalRead(AppConfig::BUTTON_B_PIN);
+
+  // Button A falling edge (HIGH -> LOW)
+  if (lastBtnAState_ == HIGH && currentStateA == LOW) {
+    if (nowMs - lastBtnAPressMs_ >= AppConfig::BUTTON_DEBOUNCE_MS) {
+      lastBtnAPressMs_ = nowMs;
+      char ts[32]{};
+      TimestampQuality quality = TimestampQuality::Estimated;
+      timeManager_.getTimestamp(ts, sizeof(ts), quality);
+      loggerManager_.logEvent("A", ts, quality, 2); // Category 2 = Button A
+      Serial.printf("[Event] Logged hardware Button A event at %s\n", ts);
+    }
+  }
+  lastBtnAState_ = currentStateA;
+
+  // Button B falling edge (HIGH -> LOW)
+  if (lastBtnBState_ == HIGH && currentStateB == LOW) {
+    if (nowMs - lastBtnBPressMs_ >= AppConfig::BUTTON_DEBOUNCE_MS) {
+      lastBtnBPressMs_ = nowMs;
+      char ts[32]{};
+      TimestampQuality quality = TimestampQuality::Estimated;
+      timeManager_.getTimestamp(ts, sizeof(ts), quality);
+      loggerManager_.logEvent("B", ts, quality, 3); // Category 3 = Button B
+      Serial.printf("[Event] Logged hardware Button B event at %s\n", ts);
+    }
+  }
+  lastBtnBState_ = currentStateB;
 }
 
 void AppCoordinator::handleDisplayRefresh(uint32_t nowMs) {

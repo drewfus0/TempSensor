@@ -109,6 +109,8 @@ void WebManager::registerRoutes() {
   server_.on("/api/config", HTTP_POST, [this]() { logRequest(); handleConfigPost(); });
   server_.on("/api/history", HTTP_GET, [this]() { logRequest(); handleHistoryJson(); });
   server_.on("/api/events", HTTP_GET, [this]() { logRequest(); handleEventsJson(); });
+  server_.on("/api/events/create", HTTP_POST, [this]() { logRequest(); handleCreateEvent(); });
+  server_.on("/api/events/update", HTTP_POST, [this]() { logRequest(); handleUpdateEvent(); });
   server_.on("/api/logs", HTTP_GET, [this]() { logRequest(); handleLogsJson(); });
   server_.on("/api/logs/download", HTTP_GET, [this]() { logRequest(); handleLogDownload(); });
   server_.on("/api/logs/delete", HTTP_POST, [this]() { logRequest(); handleLogDelete(); });
@@ -988,6 +990,18 @@ void WebManager::handleRoot() {
             <h2 style='margin: 0;'>Event Timeline</h2>
             <button class='btn-refresh' onclick='forceRefreshTask("events")' title='Force update events list'>⟳</button>
           </div>
+
+          <form onsubmit='createCustomEvent(event)' style='display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; padding: 10px; background: rgba(0,0,0,0.2); border: 1px solid var(--card-border); border-radius: 6px;'>
+            <div style='display: flex; gap: 6px;'>
+              <input type='text' id='newEventMsg' placeholder='Event name (e.g. Watered Plants)' class='form-control' style='flex: 1;' required maxlength='128'>
+              <button type='submit' class='btn' style='padding: 6px 12px; font-size: 0.8rem;'>+ Add</button>
+            </div>
+            <div style='display: flex; align-items: center; gap: 6px;'>
+              <label for='newEventTs' style='font-size: 0.75rem; color: var(--text-sub); white-space: nowrap;'>Backdate (Optional):</label>
+              <input type='datetime-local' id='newEventTs' class='form-control' style='padding: 2px 6px; font-size: 0.75rem; flex: 1;'>
+            </div>
+          </form>
+
           <div class='scroll-area'>
             <div class='timeline-container' id='eventsTimeline'>
               <div style='color: var(--text-sub);'>loading...</div>
@@ -999,7 +1013,12 @@ void WebManager::handleRoot() {
 
       <div style='display: flex; flex-direction: column; gap: 20px;'>
         <section class='card' style='flex: 1; display: flex; flex-direction: column;'>
-          <h2>Historical Chart</h2>
+          <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+            <h2 style='margin: 0;'>Historical Chart</h2>
+            <label style='display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-sub); cursor: pointer;'>
+              <input type='checkbox' id='chkShowEvents' onchange='if(historyLoaded) loadHistory()' checked> Show Events on Graph
+            </label>
+          </div>
           <div class='controls-grid' style='grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 8px;'>
             <div class='form-group'>
               <label for='rangeMode'>Filter Mode</label>
@@ -1494,6 +1513,54 @@ void WebManager::handleRoot() {
       }
     }
 
+    let lastLoadedEvents = [];
+
+    async function createCustomEvent(e) {
+      if (e) e.preventDefault();
+      const msgInput = $('newEventMsg');
+      const tsInput = $('newEventTs');
+      const msg = msgInput.value.trim();
+      if (!msg) return;
+
+      let tsStr = '';
+      if (tsInput.value) {
+        tsStr = tsInput.value.replace('T', ' ') + ':00';
+      }
+
+      try {
+        const res = await fetch('/api/events/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event: msg, ts: tsStr })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        msgInput.value = '';
+        tsInput.value = '';
+        await loadEvents();
+        if (historyLoaded) loadHistory();
+      } catch (err) {
+        alert('Failed to add event: ' + err.message);
+      }
+    }
+
+    async function editEventRecord(oldTs, currentName) {
+      const newName = prompt('Edit Event Name:', currentName);
+      if (!newName || newName.trim() === '' || newName.trim() === currentName) return;
+
+      try {
+        const res = await fetch('/api/events/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ oldTs: oldTs, oldEvent: currentName, event: newName.trim() })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        await loadEvents();
+        if (historyLoaded) loadHistory();
+      } catch (err) {
+        alert('Failed to update event: ' + err.message);
+      }
+    }
+
     async function loadEvents() {
       if (isLoadingHistory) return;
       try {
@@ -1532,6 +1599,8 @@ void WebManager::handleRoot() {
           list = Array.isArray(data.events) ? data.events : [];
         }
         
+        lastLoadedEvents = list;
+
         if (list.length === 0) {
           timeline.innerHTML = '<div style="color: var(--text-sub); font-size:0.75rem;">No events logged.</div>';
           return;
@@ -1551,9 +1620,13 @@ void WebManager::handleRoot() {
           }
           
           const timePart = e.ts;
-          html += '<div class="timeline-item ' + severity + '">';
-          html += '  <div class="timeline-time">' + timePart + '</div>';
-          html += '  <div class="timeline-content">' + e.event + '</div>';
+          const safeMsg = e.event.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+          html += '<div class="timeline-item ' + severity + '" style="display:flex; justify-content:space-between; align-items:center;">';
+          html += '  <div>';
+          html += '    <div class="timeline-time">' + timePart + '</div>';
+          html += '    <div class="timeline-content">' + e.event + '</div>';
+          html += '  </div>';
+          html += `  <button onclick="editEventRecord('${timePart}', '${safeMsg}')" style="padding: 2px 6px; font-size: 0.7rem; background: rgba(255,255,255,0.08); border: 1px solid var(--card-border); color: var(--text); border-radius: 4px; cursor: pointer;">Edit</button>`;
           html += '</div>';
         }
         timeline.innerHTML = html;
@@ -2092,6 +2165,7 @@ void WebManager::handleRoot() {
         }
 
         updateModalProgress(95, 'Rendering chart...');
+        await loadEvents();
 
         const startMs = startDate.getTime();
         const endMs = endDate.getTime();
@@ -2241,6 +2315,7 @@ void WebManager::handleRoot() {
             dyData,
             {
               customBars: true,
+              dateWindow: [ startDate.getTime(), endDate.getTime() ],
               labels: [ "Time", "Temperature", "Humidity", "Pressure" ],
               colors: [ "#f43f5e", "#06b6d4", "#10b981" ],
               strokeWidth: 2,
@@ -2248,6 +2323,40 @@ void WebManager::handleRoot() {
               axisLineColor: "rgba(255, 255, 255, 0.1)",
               labelsDiv: "historyLegend",
               legend: "always",
+              underlayCallback: function(canvas, area, g) {
+                const chk = document.getElementById('chkShowEvents');
+                if (chk && !chk.checked) return;
+                if (!lastLoadedEvents || lastLoadedEvents.length === 0) return;
+
+                canvas.save();
+                canvas.font = '10px sans-serif';
+                for (let i = 0; i < lastLoadedEvents.length; i++) {
+                  const ev = lastLoadedEvents[i];
+                  const evMs = new Date(ev.ts.replace(' ', 'T')).getTime();
+                  const x = g.toDomXCoord(evMs);
+                  if (x >= area.x && x <= area.x + area.w) {
+                    let col = '#f59e0b';
+                    if (ev.category === 2 || ev.event === 'A') col = '#f43f5e';
+                    else if (ev.category === 3 || ev.event === 'B') col = '#06b6d4';
+
+                    canvas.strokeStyle = col;
+                    canvas.setLineDash([4, 4]);
+                    canvas.lineWidth = 1.5;
+                    canvas.beginPath();
+                    canvas.moveTo(x, area.y);
+                    canvas.lineTo(x, area.y + area.h);
+                    canvas.stroke();
+
+                    canvas.setLineDash([]);
+                    const txtWidth = canvas.measureText(ev.event).width;
+                    canvas.fillStyle = col;
+                    canvas.fillRect(x + 2, area.y + 4, txtWidth + 6, 14);
+                    canvas.fillStyle = '#ffffff';
+                    canvas.fillText(ev.event, x + 5, area.y + 15);
+                  }
+                }
+                canvas.restore();
+              },
               series: {
                 "Temperature": { axis: 'y' },
                 "Humidity": { axis: 'y2' },
@@ -3208,6 +3317,175 @@ void WebManager::handleEventsJson() {
     streamEventsJson(startTs, endTs, limit);
   } else {
     streamEventsBinary(limit);
+  }
+}
+
+void WebManager::handleCreateEvent() {
+  if (!ensureSdReady()) {
+    sendJsonError(503, "SD card unavailable");
+    return;
+  }
+
+  String msg = "";
+  String ts = "";
+  uint8_t category = 1;
+
+  if (server_.hasArg("plain")) {
+    StaticJsonDocument<256> doc;
+    DeserializationError err = deserializeJson(doc, server_.arg("plain"));
+    if (!err) {
+      if (doc.containsKey("event")) msg = doc["event"].as<String>();
+      if (doc.containsKey("ts")) ts = doc["ts"].as<String>();
+      if (doc.containsKey("category")) category = doc["category"].as<uint8_t>();
+    }
+  }
+
+  if (msg.length() == 0 && server_.hasArg("event")) msg = server_.arg("event");
+  if (ts.length() == 0 && server_.hasArg("ts")) ts = server_.arg("ts");
+
+  msg.trim();
+  if (msg.length() == 0) {
+    sendJsonError(400, "Event message cannot be empty");
+    return;
+  }
+
+  if (msg.length() > 128) {
+    msg = msg.substring(0, 128);
+  }
+
+  TimestampQuality quality = TimestampQuality::Estimated;
+  if (ts.length() == 0) {
+    char tsBuf[32]{};
+    if (timeManager_) {
+      timeManager_->getTimestamp(tsBuf, sizeof(tsBuf), quality);
+      ts = String(tsBuf);
+    } else {
+      ts = "2026-01-01 00:00:00";
+    }
+  } else {
+    if (timeManager_ && timeManager_->isNtpSynced()) {
+      quality = TimestampQuality::Ntp;
+    }
+  }
+
+  bool ok = loggerManager_->logEvent(msg.c_str(), ts.c_str(), quality, category);
+  if (ok) {
+    server_.send(200, "application/json", "{\"success\":true}");
+  } else {
+    sendJsonError(500, "Failed to log event");
+  }
+}
+
+void WebManager::handleUpdateEvent() {
+  if (!ensureSdReady()) {
+    sendJsonError(503, "SD card unavailable");
+    return;
+  }
+
+  String oldTs = "";
+  String oldEvent = "";
+  String newEvent = "";
+
+  if (server_.hasArg("plain")) {
+    StaticJsonDocument<256> doc;
+    DeserializationError err = deserializeJson(doc, server_.arg("plain"));
+    if (!err) {
+      if (doc.containsKey("oldTs")) oldTs = doc["oldTs"].as<String>();
+      else if (doc.containsKey("ts")) oldTs = doc["ts"].as<String>();
+
+      if (doc.containsKey("oldEvent")) oldEvent = doc["oldEvent"].as<String>();
+      else if (doc.containsKey("oldName")) oldEvent = doc["oldName"].as<String>();
+
+      if (doc.containsKey("event")) newEvent = doc["event"].as<String>();
+      else if (doc.containsKey("newEvent")) newEvent = doc["newEvent"].as<String>();
+    }
+  }
+
+  if (oldTs.length() == 0 && server_.hasArg("oldTs")) oldTs = server_.arg("oldTs");
+  if (oldEvent.length() == 0 && server_.hasArg("oldEvent")) oldEvent = server_.arg("oldEvent");
+  if (newEvent.length() == 0 && server_.hasArg("event")) newEvent = server_.arg("event");
+
+  newEvent.trim();
+  if (newEvent.length() == 0) {
+    sendJsonError(400, "New event name cannot be empty");
+    return;
+  }
+  if (newEvent.length() > 128) {
+    newEvent = newEvent.substring(0, 128);
+  }
+
+  if (!SD.exists(AppConfig::EVENT_DIR_PATH)) {
+    sendJsonError(404, "Event directory not found");
+    return;
+  }
+
+  File dir = SD.open(AppConfig::EVENT_DIR_PATH);
+  if (!dir || !dir.isDirectory()) {
+    sendJsonError(404, "Event directory unavailable");
+    return;
+  }
+
+  std::vector<String> binFiles;
+  File entry = dir.openNextFile();
+  while (entry) {
+    if (!entry.isDirectory()) {
+      String name = String(entry.name());
+      if (name.startsWith("ev_") && name.endsWith(".bin")) {
+        binFiles.push_back(name);
+      }
+    }
+    entry.close();
+    entry = dir.openNextFile();
+  }
+  dir.close();
+
+  bool updated = false;
+  for (const auto& fname : binFiles) {
+    String path = String(AppConfig::EVENT_DIR_PATH) + "/" + fname;
+    File file = SD.open(path, "r+");
+    if (!file) continue;
+
+    size_t totalRecords = file.size() / sizeof(EventRecord);
+    for (size_t r = 0; r < totalRecords; r++) {
+      file.seek(r * sizeof(EventRecord));
+      EventRecord rec;
+      if (file.read(reinterpret_cast<uint8_t*>(&rec), sizeof(EventRecord)) == sizeof(EventRecord)) {
+        if (rec.quality == 2 || rec.epochTime == 0) continue;
+
+        char tsBuf[64]{};
+        time_t epoch = rec.epochTime;
+        struct tm* timeinfo = localtime(&epoch);
+        if (timeinfo && timeinfo->tm_year > 70) {
+          snprintf(tsBuf, sizeof(tsBuf), "%04u-%02u-%02u %02u:%02u:%02u",
+                   (unsigned)(timeinfo->tm_year + 1900), (unsigned)(timeinfo->tm_mon + 1), (unsigned)timeinfo->tm_mday,
+                   (unsigned)timeinfo->tm_hour, (unsigned)timeinfo->tm_min, (unsigned)timeinfo->tm_sec);
+        } else {
+          snprintf(tsBuf, sizeof(tsBuf), "2026-01-01 00:00:00");
+        }
+
+        if ((oldTs.length() == 0 || String(tsBuf) == oldTs) &&
+            (oldEvent.length() == 0 || strcmp(rec.message, oldEvent.c_str()) == 0)) {
+          
+          strncpy(rec.message, newEvent.c_str(), sizeof(rec.message) - 1);
+          rec.message[sizeof(rec.message) - 1] = '\0';
+
+          file.seek(r * sizeof(EventRecord));
+          file.write(reinterpret_cast<const uint8_t*>(&rec), sizeof(EventRecord));
+          file.flush();
+          file.close();
+          updated = true;
+          break;
+        }
+      }
+    }
+    if (file) file.close();
+    if (updated) break;
+  }
+
+  if (updated) {
+    server_.send(200, "application/json", "{\"success\":true}");
+  } else {
+    sendJsonError(404, "Matching event record not found");
   }
 }
 

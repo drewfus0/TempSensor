@@ -384,30 +384,6 @@ void LoggerManager::initEventStorage() {
     return;
   }
 
-  File dir = SD.open(AppConfig::EVENT_DIR_PATH);
-  bool hasBinFiles = false;
-  if (dir && dir.isDirectory()) {
-    File entry = dir.openNextFile();
-    while (entry) {
-      if (!entry.isDirectory()) {
-        String name = String(entry.name());
-        if (name.endsWith(".bin")) {
-          hasBinFiles = true;
-          entry.close();
-          break;
-        }
-      }
-      entry.close();
-      entry = dir.openNextFile();
-    }
-    dir.close();
-  }
-
-  if (!hasBinFiles && SD.exists(AppConfig::EVENT_FILE_PATH)) {
-    Serial.println("[Logger] Migrating legacy /logs/events.csv to binary chunk storage...");
-    migrateLegacyEventsCsv();
-  }
-
   char activePath[64]{};
   size_t slotIdx = 0;
   getActiveEventChunkPath(activePath, sizeof(activePath), slotIdx, time(nullptr));
@@ -523,34 +499,6 @@ bool LoggerManager::getActiveEventChunkPath(char* outPath, size_t maxPathLen, si
   }
   outSlotIndex = 0;
   return true;
-}
-
-void LoggerManager::migrateLegacyEventsCsv() {
-  File csv = SD.open(AppConfig::EVENT_FILE_PATH, "r");
-  if (!csv) return;
-
-  uint32_t count = 0;
-  while (csv.available()) {
-    String line = csv.readStringUntil('\n');
-    line.trim();
-    if (line.length() == 0 || line.startsWith("timestamp,")) continue;
-
-    int comma1 = line.indexOf(',');
-    int comma2 = line.indexOf(',', comma1 + 1);
-    if (comma1 > 0 && comma2 > comma1) {
-      String tsStr = line.substring(0, comma1);
-      String qStr = line.substring(comma1 + 1, comma2);
-      String eventStr = line.substring(comma2 + 1);
-
-      TimestampQuality quality = (qStr == "ntp") ? TimestampQuality::Ntp : TimestampQuality::Estimated;
-      time_t epoch = parseTimestampToEpoch(tsStr.c_str());
-      logEvent(eventStr.c_str(), epoch, quality, 0);
-      count++;
-    }
-  }
-  csv.close();
-  Serial.printf("[Logger] Migrated %u legacy events from CSV\n", count);
-  SD.rename(AppConfig::EVENT_FILE_PATH, "/logs/events.csv.bak");
 }
 
 bool LoggerManager::ensureDir(const char* path) {

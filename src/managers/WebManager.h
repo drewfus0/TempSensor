@@ -37,6 +37,8 @@ class WebManager {
   void handleConfigPost();
   void handleHistoryJson();
   void handleEventsJson();
+  void handleCreateEvent();
+  void handleUpdateEvent();
   void handleLogsJson();
   void handleLogDownload();
   void handleSdTreeJson();

@@ -49,7 +49,6 @@ class LoggerManager {
   void initEventStorage();
   bool getActiveEventChunkPath(char* outPath, size_t maxPathLen, size_t& outSlotIndex, time_t currentEpoch);
   bool preallocateEventChunk(const char* filepath);
-  void migrateLegacyEventsCsv();
   size_t batteryWriteIndex_ = 0;
 
   RingBuffer<Sample, AppConfig::MAX_LOG_QUEUE_SIZE> queue_;

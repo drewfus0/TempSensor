@@ -19,6 +19,7 @@ class AppCoordinator {
 
  private:
   void handleSampling(uint32_t nowMs);
+  void handleButtons(uint32_t nowMs);
   void handleDisplayRefresh(uint32_t nowMs);
   void handleDiagnostics(uint32_t nowMs);
   void refreshHealth(uint32_t nowMs);
@@ -41,6 +42,10 @@ class AppCoordinator {
   uint32_t lastDisplayMs_ = 0;
   uint32_t lastDiagMs_ = 0;
   uint32_t lastBatteryLogMs_ = 0;
+  uint32_t lastBtnAPressMs_ = 0;
+  uint32_t lastBtnBPressMs_ = 0;
+  bool lastBtnAState_ = HIGH;
+  bool lastBtnBState_ = HIGH;
   bool otaInitialized_ = false;
   bool lastWifiConnected_ = false;
   uint32_t wifiDisconnectMs_ = 0;
