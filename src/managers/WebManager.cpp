@@ -112,6 +112,7 @@ void WebManager::registerRoutes() {
   server_.on("/api/events", HTTP_GET, [this]() { logRequest(); handleEventsJson(); });
   server_.on("/api/events/create", HTTP_POST, [this]() { logRequest(); handleCreateEvent(); });
   server_.on("/api/events/update", HTTP_POST, [this]() { logRequest(); handleUpdateEvent(); });
+  server_.on("/api/events/delete", HTTP_POST, [this]() { logRequest(); handleDeleteEvent(); });
   server_.on("/api/logs", HTTP_GET, [this]() { logRequest(); handleLogsJson(); });
   server_.on("/api/logs/download", HTTP_GET, [this]() { logRequest(); handleLogDownload(); });
   server_.on("/api/logs/delete", HTTP_POST, [this]() { logRequest(); handleLogDelete(); });
@@ -996,6 +997,106 @@ void WebManager::handleUpdateEvent() {
   }
 
   if (updated) {
+    server_.send(200, "application/json", "{\"success\":true}");
+  } else {
+    sendJsonError(404, "Matching event record not found");
+  }
+}
+
+void WebManager::handleDeleteEvent() {
+  if (!ensureSdReady()) {
+    sendJsonError(503, "SD card unavailable");
+    return;
+  }
+
+  String ts = "";
+  String eventMsg = "";
+
+  if (server_.hasArg("plain")) {
+    StaticJsonDocument<256> doc;
+    DeserializationError err = deserializeJson(doc, server_.arg("plain"));
+    if (!err) {
+      if (doc.containsKey("ts")) ts = doc["ts"].as<String>();
+      else if (doc.containsKey("oldTs")) ts = doc["oldTs"].as<String>();
+
+      if (doc.containsKey("event")) eventMsg = doc["event"].as<String>();
+      else if (doc.containsKey("name")) eventMsg = doc["name"].as<String>();
+      else if (doc.containsKey("oldEvent")) eventMsg = doc["oldEvent"].as<String>();
+    }
+  }
+
+  if (ts.length() == 0 && server_.hasArg("ts")) ts = server_.arg("ts");
+  if (eventMsg.length() == 0 && server_.hasArg("event")) eventMsg = server_.arg("event");
+
+  if (!SD.exists(AppConfig::EVENT_DIR_PATH)) {
+    sendJsonError(404, "Event directory not found");
+    return;
+  }
+
+  File dir = SD.open(AppConfig::EVENT_DIR_PATH);
+  if (!dir || !dir.isDirectory()) {
+    sendJsonError(404, "Event directory unavailable");
+    return;
+  }
+
+  std::vector<String> binFiles;
+  File entry = dir.openNextFile();
+  while (entry) {
+    if (!entry.isDirectory()) {
+      String name = String(entry.name());
+      if (name.startsWith("ev_") && name.endsWith(".bin")) {
+        binFiles.push_back(name);
+      }
+    }
+    entry.close();
+    entry = dir.openNextFile();
+  }
+  dir.close();
+
+  bool deleted = false;
+  for (const auto& fname : binFiles) {
+    String path = String(AppConfig::EVENT_DIR_PATH) + "/" + fname;
+    File file = SD.open(path, "r+");
+    if (!file) continue;
+
+    size_t totalRecords = file.size() / sizeof(EventRecord);
+    for (size_t r = 0; r < totalRecords; r++) {
+      file.seek(r * sizeof(EventRecord));
+      EventRecord rec;
+      if (file.read(reinterpret_cast<uint8_t*>(&rec), sizeof(EventRecord)) == sizeof(EventRecord)) {
+        if (rec.quality == 2 || rec.epochTime == 0) continue;
+
+        char tsBuf[64]{};
+        time_t epoch = rec.epochTime;
+        struct tm* timeinfo = localtime(&epoch);
+        if (timeinfo && timeinfo->tm_year > 70) {
+          snprintf(tsBuf, sizeof(tsBuf), "%04u-%02u-%02u %02u:%02u:%02u",
+                   (unsigned)(timeinfo->tm_year + 1900), (unsigned)(timeinfo->tm_mon + 1), (unsigned)timeinfo->tm_mday,
+                   (unsigned)timeinfo->tm_hour, (unsigned)timeinfo->tm_min, (unsigned)timeinfo->tm_sec);
+        } else {
+          snprintf(tsBuf, sizeof(tsBuf), "2026-01-01 00:00:00");
+        }
+
+        if ((ts.length() == 0 || String(tsBuf) == ts) &&
+            (eventMsg.length() == 0 || strcmp(rec.message, eventMsg.c_str()) == 0)) {
+          
+          rec.quality = 2; // Mark record as invalid/deleted
+          rec.epochTime = 0;
+
+          file.seek(r * sizeof(EventRecord));
+          file.write(reinterpret_cast<const uint8_t*>(&rec), sizeof(EventRecord));
+          file.flush();
+          file.close();
+          deleted = true;
+          break;
+        }
+      }
+    }
+    if (file) file.close();
+    if (deleted) break;
+  }
+
+  if (deleted) {
     server_.send(200, "application/json", "{\"success\":true}");
   } else {
     sendJsonError(404, "Matching event record not found");

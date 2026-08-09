@@ -33,10 +33,20 @@ bool SensorManager::begin(int sdaPin, int sclPin, uint8_t i2cAddress) {
     }
   }
   
-  // Attempt BME280 initialization
+  // Attempt BME280 initialization (primary address 0x76 or 0x77)
   ready_ = bme_.begin(i2cAddress_, &Wire);
   if (!ready_) {
-    Serial.println("[Sensor] BME280 initialization failed (address mismatch or not BME280)");
+    uint8_t altAddr = (i2cAddress_ == 0x76) ? 0x77 : 0x76;
+    Serial.printf("[Sensor] BME280 failed at 0x%02X, probing alternate address 0x%02X...\n", i2cAddress_, altAddr);
+    ready_ = bme_.begin(altAddr, &Wire);
+    if (ready_) {
+      i2cAddress_ = altAddr;
+      Serial.printf("[Sensor] BME280 detected at alternate address 0x%02X!\n", i2cAddress_);
+    }
+  }
+
+  if (!ready_) {
+    Serial.println("[Sensor] BME280 initialization failed on both 0x76 and 0x77");
     Serial.println("[Sensor] Enabling SIMULATION mode with dummy sensor data");
     simulated_ = true;
     ready_ = true;
@@ -95,6 +105,15 @@ bool SensorManager::recoverBusAndSensor() {
 
   // Step 4: Re-initialize Adafruit_BME280 driver
   bool reInitOk = bme_.begin(i2cAddress_, &Wire);
+  if (!reInitOk) {
+    uint8_t altAddr = (i2cAddress_ == 0x76) ? 0x77 : 0x76;
+    reInitOk = bme_.begin(altAddr, &Wire);
+    if (reInitOk) {
+      i2cAddress_ = altAddr;
+      Serial.printf("[Sensor] BME280 recovered at alternate address 0x%02X!\n", i2cAddress_);
+    }
+  }
+
   if (reInitOk) {
     bme_.setSampling(Adafruit_BME280::MODE_NORMAL,
                      Adafruit_BME280::SAMPLING_X2,

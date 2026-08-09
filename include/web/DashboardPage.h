@@ -1590,6 +1590,21 @@ const char DASHBOARD_HTML[] PROGMEM = R"HTML(
       } catch (err) {
         alert('Failed to update event: ' + err.message);
       }
+    async function deleteEventRecord(ts, currentName) {
+      if (!confirm('Are you sure you want to delete this event?\n"' + currentName + '"')) return;
+
+      try {
+        const res = await fetch('/api/events/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ts: ts, event: currentName })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        await loadEvents();
+        if (historyLoaded) loadHistory();
+      } catch (err) {
+        alert('Failed to delete event: ' + err.message);
+      }
     }
 
     async function loadEvents() {
@@ -1661,7 +1676,10 @@ const char DASHBOARD_HTML[] PROGMEM = R"HTML(
           html += '    </div>';
           html += '    <div class="timeline-content" style="word-break: break-word; margin-top: 2px;">' + e.event + '</div>';
           html += '  </div>';
-          html += `  <button onclick="editEventRecord('${timePart}', '${safeMsg}')" style="width: auto; flex-shrink: 0; padding: 3px 8px; font-size: 0.7rem; background: rgba(255,255,255,0.08); border: 1px solid var(--card-border); color: var(--text); border-radius: 4px; cursor: pointer; white-space: nowrap;">Edit</button>`;
+          html += '  <div style="display:flex; gap:6px; flex-shrink:0;">';
+          html += `    <button onclick="editEventRecord('${timePart}', '${safeMsg}')" style="width: auto; flex-shrink: 0; padding: 3px 8px; font-size: 0.7rem; background: rgba(255,255,255,0.08); border: 1px solid var(--card-border); color: var(--text); border-radius: 4px; cursor: pointer; white-space: nowrap;">Edit</button>`;
+          html += `    <button onclick="deleteEventRecord('${timePart}', '${safeMsg}')" style="width: auto; flex-shrink: 0; padding: 3px 8px; font-size: 0.7rem; background: rgba(239,68,68,0.2); border: 1px solid var(--error); color: var(--error); border-radius: 4px; cursor: pointer; white-space: nowrap;">Delete</button>`;
+          html += '  </div>';
           html += '</div>';
         }
         timeline.innerHTML = html;
