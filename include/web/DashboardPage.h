@@ -1590,6 +1590,8 @@ const char DASHBOARD_HTML[] PROGMEM = R"HTML(
       } catch (err) {
         alert('Failed to update event: ' + err.message);
       }
+    }
+
     async function deleteEventRecord(ts, currentName) {
       if (!confirm('Are you sure you want to delete this event?\n"' + currentName + '"')) return;
 
