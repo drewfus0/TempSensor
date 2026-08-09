@@ -183,6 +183,9 @@ void WebManager::handleHealthJson() {
     doc["wifi_connected"] = health_->wifiConnected;
     doc["sd_healthy"] = health_->sdHealthy;
     doc["ntp_synced"] = health_->ntpSynced;
+    doc["sensor_healthy"] = health_->sensorHealthy;
+    doc["sensor_simulated"] = health_->sensorSimulated;
+    doc["sensor_status"] = health_->sensorStatus;
     
     JsonObject battery = doc.createNestedObject("battery");
     battery["voltage"] = health_->batteryVoltage;

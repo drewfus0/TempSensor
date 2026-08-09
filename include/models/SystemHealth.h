@@ -12,6 +12,9 @@ struct SystemHealth {
   bool wifiConnected = false;
   bool sdHealthy = false;
   bool ntpSynced = false;
+  bool sensorHealthy = false;
+  bool sensorSimulated = false;
+  const char* sensorStatus = "Not initialized";
 
   float batteryVoltage = 0.0f;
   int batteryPercent = 0;

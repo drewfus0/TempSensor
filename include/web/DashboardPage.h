@@ -633,11 +633,14 @@ const char DASHBOARD_HTML[] PROGMEM = R"HTML(
     .countdown-item {
       display: flex;
       align-items: center;
-      gap: 4px;
-      padding: 2px 6px;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 3px 8px;
       border-radius: 4px;
-      border: 1px solid transparent;
+      border: 1px solid var(--card-border);
+      background: rgba(255, 255, 255, 0.03);
       transition: background 0.2s ease, border-color 0.2s ease;
+      min-width: 130px;
     }
     .countdown-item.fetching {
       background: rgba(6, 182, 212, 0.15);
@@ -650,6 +653,10 @@ const char DASHBOARD_HTML[] PROGMEM = R"HTML(
       font-weight: 600;
       color: var(--accent);
       font-family: var(--font-mono);
+      display: inline-block;
+      min-width: 65px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
     }
     .btn-refresh-sm {
       background: rgba(255, 255, 255, 0.06);
@@ -794,6 +801,7 @@ const char DASHBOARD_HTML[] PROGMEM = R"HTML(
           <div class='pill'><span style='color: var(--text-sub)'>WiFi:</span> <span id='pillWifi'>-</span></div>
           <div class='pill'><span style='color: var(--text-sub)'>SD:</span> <span id='pillSd'>-</span></div>
           <div class='pill'><span style='color: var(--text-sub)'>NTP:</span> <span id='pillNtp'>-</span></div>
+          <div class='pill'><span style='color: var(--text-sub)'>Sensor:</span> <span id='pillSensor'>-</span></div>
           <div class='pill'><span style='color: var(--text-sub)'>IP:</span> <span id='pillIp'>-</span></div>
           <div class='pill'><span style='color: var(--text-sub)'>Updated:</span> <span id='pillRef'>-</span></div>
         </div>
@@ -1451,6 +1459,22 @@ const char DASHBOARD_HTML[] PROGMEM = R"HTML(
       
       $('pillNtp').textContent = ntp;
       $('pillNtp').style.color = (health && health.ntp_synced) ? 'var(--success)' : 'var(--warning)';
+
+      let sensorText = 'OFFLINE';
+      let sensorColor = 'var(--error)';
+      if (health && health.has_health) {
+        if (health.sensor_healthy) {
+          sensorText = health.sensor_simulated ? 'SIM' : 'OK';
+          sensorColor = health.sensor_simulated ? 'var(--warning)' : 'var(--success)';
+        } else if (health.sensor_status) {
+          sensorText = health.sensor_status;
+        }
+      }
+      const pillSensor = $('pillSensor');
+      if (pillSensor) {
+        pillSensor.textContent = sensorText;
+        pillSensor.style.color = sensorColor;
+      }
 
       let ip = '-';
       if (live && live.has_sample && typeof live.ip === 'string') {

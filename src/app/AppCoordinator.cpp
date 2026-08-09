@@ -317,6 +317,9 @@ void AppCoordinator::refreshHealth(uint32_t nowMs) {
   health_.wifiConnected = (WiFi.status() == WL_CONNECTED);
   health_.sdHealthy = loggerManager_.isSdHealthy();
   health_.ntpSynced = timeManager_.isNtpSynced();
+  health_.sensorHealthy = sensorManager_.isReady() && !sensorManager_.hasFault();
+  health_.sensorSimulated = sensorManager_.isSimulated();
+  health_.sensorStatus = sensorManager_.getStatus();
 
   health_.batteryVoltage = batteryManager_.getVoltage();
   health_.batteryPercent = batteryManager_.getPercent();

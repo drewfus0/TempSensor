@@ -53,27 +53,47 @@ bool SensorManager::begin(int sdaPin, int sclPin, uint8_t i2cAddress) {
 
   simulated_ = false;
   consecutiveFailures_ = 0;
+  recoveryAttempts_ = 0;
+  stuckSampleCount_ = 0;
   Serial.println("[Sensor] BME280 ready (REAL sensor)");
   status_msg_ = "REAL sensor active";
   return true;
 }
 
 bool SensorManager::recoverBusAndSensor() {
-  Serial.println("[Sensor] Attempting I2C bus & BME280 sensor auto-recovery...");
+  recoveryAttempts_++;
+  Serial.printf("[Sensor] Attempting I2C bus & BME280 auto-recovery (attempt #%u)...\n", recoveryAttempts_);
 
-  // Toggle SCL pin 9 times to unstick SDA line if pulled low by slave
+  // Step 1: Bit-bang SCL 16 times to release stuck SDA pin
   pinMode(sdaPin_, INPUT_PULLUP);
   pinMode(sclPin_, OUTPUT);
-  for (int i = 0; i < 9; i++) {
+  for (int i = 0; i < 16; i++) {
     digitalWrite(sclPin_, LOW);
     delayMicroseconds(10);
     digitalWrite(sclPin_, HIGH);
     delayMicroseconds(10);
   }
 
-  Wire.begin(sdaPin_, sclPin_);
-  delay(20);
+  // Generate I2C STOP condition
+  pinMode(sdaPin_, OUTPUT);
+  digitalWrite(sdaPin_, LOW);
+  digitalWrite(sclPin_, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(sdaPin_, HIGH);
+  delayMicroseconds(10);
 
+  // Step 2: Re-init Wire peripheral
+  Wire.begin(sdaPin_, sclPin_);
+  delay(30);
+
+  // Step 3: Send BME280 Power-On Reset (0xB6 to Register 0xE0)
+  Wire.beginTransmission(i2cAddress_);
+  Wire.write(0xE0);
+  Wire.write(0xB6);
+  Wire.endTransmission();
+  delay(100);  // Allow sensor internal POR to complete
+
+  // Step 4: Re-initialize Adafruit_BME280 driver
   bool reInitOk = bme_.begin(i2cAddress_, &Wire);
   if (reInitOk) {
     bme_.setSampling(Adafruit_BME280::MODE_NORMAL,
@@ -85,13 +105,26 @@ bool SensorManager::recoverBusAndSensor() {
     ready_ = true;
     simulated_ = false;
     consecutiveFailures_ = 0;
+    stuckSampleCount_ = 0;
+    recoveryAttempts_ = 0;
     status_msg_ = "REAL sensor active (recovered)";
     Serial.println("[Sensor] BME280 auto-recovery SUCCESSFUL");
     return true;
   }
 
-  Serial.println("[Sensor] BME280 hardware recovery failed");
-  status_msg_ = "Sensor hardware error";
+  // Recovery failed: MUST set ready_ = false so SensorManager knows hardware is down!
+  ready_ = false;
+  status_msg_ = "Sensor hardware offline / fault";
+  Serial.printf("[Sensor] BME280 hardware recovery attempt #%u failed\n", recoveryAttempts_);
+  
+  if (!faultActive_) {
+    faultActive_ = true;
+    faultStartMs_ = millis();
+    lastFault_ = SensorFaultType::I2cNoAck;
+  }
+  snprintf(lastFaultMsg_, sizeof(lastFaultMsg_), "sensor_fault: Auto-recovery attempt #%u failed (0x%02X)", recoveryAttempts_, i2cAddress_);
+  pendingFaultLog_ = true;
+
   return false;
 }
 
@@ -107,7 +140,7 @@ bool SensorManager::read(float& temperatureC, float& humidityPct, float& pressur
   uint32_t nowMs = millis();
 
   if (!ready_) {
-    if (nowMs - lastRecoveryAttemptMs_ >= 5000) {
+    if (nowMs - lastRecoveryAttemptMs_ >= 3000) {
       lastRecoveryAttemptMs_ = nowMs;
       if (!faultActive_) {
         faultActive_ = true;
@@ -116,6 +149,27 @@ bool SensorManager::read(float& temperatureC, float& humidityPct, float& pressur
         snprintf(lastFaultMsg_, sizeof(lastFaultMsg_), "sensor_fault: I2C offline (0x%02X)", i2cAddress_);
         pendingFaultLog_ = true;
       }
+      recoverBusAndSensor();
+    }
+    return false;
+  }
+
+  // Active I2C ACK Check: Verify BME280 hardware responds on I2C bus BEFORE reading registers
+  Wire.beginTransmission(i2cAddress_);
+  uint8_t i2cErr = Wire.endTransmission();
+  if (i2cErr != 0) {
+    ready_ = false;
+    consecutiveFailures_++;
+    if (!faultActive_) {
+      faultActive_ = true;
+      faultStartMs_ = nowMs;
+      lastFault_ = SensorFaultType::I2cNoAck;
+      snprintf(lastFaultMsg_, sizeof(lastFaultMsg_), "sensor_fault: I2C NACK / offline (0x%02X, err=%u)", i2cAddress_, i2cErr);
+      pendingFaultLog_ = true;
+    }
+    Serial.printf("[Sensor] I2C ACK check failed: NACK at 0x%02X (err=%u)\n", i2cAddress_, i2cErr);
+    if (nowMs - lastRecoveryAttemptMs_ >= 2000) {
+      lastRecoveryAttemptMs_ = nowMs;
       recoverBusAndSensor();
     }
     return false;
@@ -130,12 +184,14 @@ bool SensorManager::read(float& temperatureC, float& humidityPct, float& pressur
                                     temperatureC < -40.0f || temperatureC > 85.0f ||
                                     humidityPct < 0.0f || humidityPct > 100.0f);
 
-  // Check for stuck / frozen sensor values (10 consecutive identical float readings)
+  // Check for stuck / frozen sensor values (3 consecutive identical float readings)
   bool isStuck = false;
   if (!isNan && !isOutOfBounds) {
-    if (temperatureC == lastTempC_ && humidityPct == lastHumPct_ && pressureHpa == lastPresHpa_) {
+    if (fabsf(temperatureC - lastTempC_) < 0.001f &&
+        fabsf(humidityPct - lastHumPct_) < 0.001f &&
+        fabsf(pressureHpa - lastPresHpa_) < 0.001f) {
       stuckSampleCount_++;
-      if (stuckSampleCount_ >= 10) {
+      if (stuckSampleCount_ >= 3) {
         isStuck = true;
       }
     } else {
@@ -167,7 +223,7 @@ bool SensorManager::read(float& temperatureC, float& humidityPct, float& pressur
 
     Serial.printf("[Sensor] Fault detected: %s (failure #%u)\n", lastFaultMsg_, consecutiveFailures_);
 
-    if (consecutiveFailures_ >= 3 || isStuck) {
+    if (consecutiveFailures_ >= 2 || isStuck) {
       if (nowMs - lastRecoveryAttemptMs_ >= 2000) {
         lastRecoveryAttemptMs_ = nowMs;
         recoverBusAndSensor();

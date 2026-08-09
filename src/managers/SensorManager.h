@@ -51,4 +51,5 @@ class SensorManager {
   float lastHumPct_ = -999.0f;
   float lastPresHpa_ = -999.0f;
   uint16_t stuckSampleCount_ = 0;
+  uint16_t recoveryAttempts_ = 0;
 };
