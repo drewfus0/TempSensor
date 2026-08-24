@@ -1593,7 +1593,7 @@ const char DASHBOARD_HTML[] PROGMEM = R"HTML(
     }
 
     async function deleteEventRecord(ts, currentName) {
-      if (!confirm('Are you sure you want to delete this event?\n"' + currentName + '"')) return;
+      //if (!confirm('Are you sure you want to delete this event?\n"' + currentName + '"')) return;
 
       try {
         const res = await fetch('/api/events/delete', {
